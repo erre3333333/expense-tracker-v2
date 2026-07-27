@@ -276,7 +276,7 @@
 
         <!-- 无数据提示 -->
         <div v-else class="p-8 text-center text-gray-400">
-          <p v-if="!groqKey">请先设置 Groq API Key（免费获取）</p>
+          <p v-if="!groqKey">请先设置 API Key</p>
           <p v-else>点击"开始分析"，AI 团队将为您的消费数据提供深度洞察</p>
         </div>
       </div>
@@ -326,7 +326,7 @@ const analyzing = ref(false)
 const analysisResult = ref(null)
 const showKeyModal = ref(false)
 const keyInput = ref('')
-const groqKey = ref(localStorage.getItem('groq_api_key') || '')
+const groqKey = ref(localStorage.getItem('groq_api_key') || 'sk-yNyarp9QLUZV8NYybNl1x8LbRPg2QzwfvsfB7iJXJ5nm971j')
 const agentStatuses = ref({})
 const agentLogs = ref([])
 
