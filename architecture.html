@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Expense Tracker v2.0 — 系统架构图</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --blue: #3B82F6; --green: #10B981; --amber: #F59E0B; --red: #EF4444;
+    --purple: #8B5CF6; --pink: #EC4899; --indigo: #4F46E5;
+    --bg: #F8FAFC; --card: #FFFFFF; --text: #1E293B; --muted: #64748B;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, "Microsoft YaHei", "Segoe UI", sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+
+  /* Header */
+  .header { background: linear-gradient(135deg, #1E293B 0%, #334155 100%); color: white; padding: 3rem 2rem; text-align: center; position: relative; overflow: hidden; }
+  .header::before { content: ''; position: absolute; top: -50%; left: -50%; width: 200%; height: 200%; background: radial-gradient(circle, rgba(59,130,246,0.1) 0%, transparent 50%); animation: headerGlow 8s ease-in-out infinite; }
+  @keyframes headerGlow { 0%, 100% { transform: translate(0, 0); } 50% { transform: translate(30px, -20px); } }
+  .header h1 { font-size: 2.2rem; position: relative; z-index: 1; }
+  .header p { opacity: 0.8; margin-top: 0.5rem; position: relative; z-index: 1; }
+
+  /* Container */
+  .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+
+  /* Section */
+  .section { margin-bottom: 3rem; }
+  .section-title { font-size: 1.5rem; font-weight: 700; margin-bottom: 1rem; padding-left: 1rem; border-left: 4px solid var(--blue); display: flex; align-items: center; gap: 0.5rem; }
+
+  /* Architecture Cards */
+  .arch-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; }
+  .arch-card { background: var(--card); border-radius: 12px; padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); transition: all 0.3s ease; position: relative; overflow: hidden; }
+  .arch-card:hover { transform: translateY(-4px); box-shadow: 0 8px 25px rgba(0,0,0,0.15); }
+  .arch-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 4px; }
+  .arch-card.blue::before { background: var(--blue); }
+  .arch-card.green::before { background: var(--green); }
+  .arch-card.amber::before { background: var(--amber); }
+  .arch-card.purple::before { background: var(--purple); }
+  .arch-card h3 { font-size: 1.1rem; margin-bottom: 0.5rem; }
+  .arch-card ul { list-style: none; padding: 0; }
+  .arch-card li { padding: 0.4rem 0; padding-left: 1.2rem; position: relative; font-size: 0.95rem; color: var(--muted); }
+  .arch-card li::before { content: '→'; position: absolute; left: 0; color: var(--blue); }
+
+  /* Flow Diagram */
+  .flow-container { background: var(--card); border-radius: 12px; padding: 2rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); overflow-x: auto; }
+  .flow-step { display: flex; align-items: flex-start; margin-bottom: 1.5rem; position: relative; }
+  .flow-step:last-child { margin-bottom: 0; }
+  .flow-num { min-width: 36px; height: 36px; border-radius: 50%; background: var(--blue); color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 0.9rem; margin-right: 1rem; animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(59,130,246,0.4); } 50% { box-shadow: 0 0 0 10px rgba(59,130,246,0); } }
+  .flow-num.green { background: var(--green); }
+  .flow-num.amber { background: var(--amber); }
+  .flow-content { flex: 1; background: #F1F5F9; border-radius: 8px; padding: 1rem; }
+  .flow-content h4 { margin-bottom: 0.3rem; }
+  .flow-content p { color: var(--muted); font-size: 0.9rem; }
+
+  /* Connector lines */
+  .flow-step:not(:last-child)::after { content: ''; position: absolute; left: 17px; top: 38px; width: 2px; height: calc(100% - 20px); background: #E2E8F0; }
+  .flow-step:not(:last-child):hover::after { background: var(--blue); transition: background 0.3s; }
+
+  /* Mermaid container */
+  .mermaid-section { background: var(--card); border-radius: 12px; padding: 2rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 2rem; }
+
+  /* Data flow diagram */
+  .data-flow { display: flex; align-items: center; justify-content: space-around; flex-wrap: wrap; gap: 1rem; padding: 2rem; }
+  .data-node { text-align: center; padding: 1rem 1.5rem; border-radius: 12px; background: var(--card); box-shadow: 0 2px 8px rgba(0,0,0,0.1); animation: float 3s ease-in-out infinite; min-width: 140px; }
+  .data-node:nth-child(2) { animation-delay: 0.5s; }
+  .data-node:nth-child(3) { animation-delay: 1s; }
+  .data-node:nth-child(4) { animation-delay: 1.5s; }
+  .data-node:nth-child(5) { animation-delay: 2s; }
+  @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+  .data-node .icon { font-size: 2rem; margin-bottom: 0.5rem; }
+  .data-node .label { font-weight: 600; font-size: 0.9rem; }
+  .data-arrow { font-size: 1.5rem; color: var(--blue); animation: arrowPulse 1.5s ease-in-out infinite; }
+  @keyframes arrowPulse { 0%, 100% { opacity: 0.3; transform: scale(1); } 50% { opacity: 1; transform: scale(1.2); } }
+
+  /* Table */
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+  th, td { padding: 0.75rem 1rem; text-align: left; border-bottom: 1px solid #E2E8F0; }
+  th { background: #F8FAFC; font-weight: 600; }
+  tr:hover { background: #F1F5F9; }
+
+  /* Tags */
+  .tag { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 6px; font-size: 0.8rem; font-weight: 600; margin: 0.2rem; }
+  .tag-blue { background: #DBEAFE; color: #1D4ED8; }
+  .tag-green { background: #D1FAE5; color: #065F46; }
+  .tag-amber { background: #FEF3C7; color: #92400E; }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    .arch-grid { grid-template-columns: 1fr; }
+    .data-flow { flex-direction: column; }
+    .data-arrow { transform: rotate(90deg); }
+  }
+
+  /* Print styles */
+  @media print {
+    .header { background: #1E293B !important; color: white !important; }
+    .arch-card:hover { transform: none; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .data-node { animation: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>📊 Expense Tracker v2.0</h1>
+  <p>系统架构与数据流图</p>
+</div>
+
+<div class="container">
+
+  <!-- Section 1: System Architecture -->
+  <div class="section">
+    <div class="section-title">🏗️ 系统架构 (Architecture)</div>
+    <div class="flow-container">
+      <div class="mermaid">
+graph TB
+    subgraph FE["前端 Vue 3 + Vite"]
+        Browser((🌐 浏览器)) --> Vite[Vite Server :5173<br/>HMR / Proxy]
+        Vite --> SPA[Vue SPA App]
+        SPA --> Dash[Dashboard.vue<br/>统计卡片 + ECharts]
+        SPA --> Txn[Transactions.vue<br/>CRUD 表单]
+        SPA --> Stats[Statistics.vue<br/>饼图/柱状图/折线图]
+        SPA --> Login[Login.vue]
+        SPA --> Reg[Register.vue]
+    end
+
+    subgraph BE["后端 FastAPI"]
+        Proxy[🔀 Vite Proxy<br/>/api → localhost:8001]
+        API[⚙️ FastAPI + uvicorn :8001]
+
+        Proxy --> API
+
+        Auth[Auth Router<br/>/api/auth/*]
+        TxnR[Transactions Router<br/>/api/transactions/*]
+        StatR[Statistics Router<br/>/api/statistics/*]
+
+        API --> Auth
+        API --> TxnR
+        API --> StatR
+    end
+
+    subgraph DATA["数据层"]
+        DB[(SQLite<br/>expenses.db)]
+        AsyncIO[aiosqlite<br/>异步驱动]
+
+        AsyncIO --> DB
+    end
+
+    subgraph SEC["安全"]
+        BCrypt[bcrypt<br/>密码哈希]
+        JWT[jwt.encode/decode<br/>Bearer Token]
+    end
+
+    Dash -.-> Proxy
+    Txn -.-> Proxy
+    Stats -.-> Proxy
+    Login -.-> Proxy
+    Reg -.-> Proxy
+
+    Auth --> AsyncIO
+    TxnR --> AsyncIO
+    StatR --> AsyncIO
+
+    Auth ~~~ BCrypt
+    Auth ~~~ JWT
+    Auth -.-> JWT
+  </div>
+    </div>
+  </div>
+
+  <!-- Section 2: Tech Stack -->
+  <div class="section">
+    <div class="section-title">🛠️ 技术栈</div>
+    <div class="arch-grid">
+      <div class="arch-card blue">
+        <h3>🎨 前端展示层</h3>
+        <ul>
+          <li>Vue 3 Composition API</li>
+          <li>Vite 5 (HMR / 热更新)</li>
+          <li>Tailwind CSS 3</li>
+          <li>ECharts 5 (图表可视化)</li>
+          <li>Vue Router 4 (路由守卫)</li>
+        </ul>
+      </div>
+      <div class="arch-card green">
+        <h3>⚙️ 后端 API 层</h3>
+        <ul>
+          <li>FastAPI 0.110 (异步框架)</li>
+          <li>uvicorn (ASGI 服务器)</li>
+          <li>aiosqlite 0.19 (异步驱动)</li>
+          <li>Pydantic (数据验证)</li>
+          <li>CORS 中间件</li>
+        </ul>
+      </div>
+      <div class="arch-card amber">
+        <h3>💾 数据存储层</h3>
+        <ul>
+          <li>SQLite (本地文件数据库)</li>
+          <li>users 表 (用户认证)</li>
+          <li>transactions 表 (交易记录)</li>
+          <li>自动建表 (startup hook)</li>
+        </ul>
+      </div>
+      <div class="arch-card purple">
+        <h3>🔐 安全层</h3>
+        <ul>
+          <li>bcrypt 密码哈希</li>
+          <li>python-jose (JWT)</li>
+          <li>Bearer Token 认证</li>
+          <li>7天 Token 有效期</li>
+          <li>localStrorage Token 存储</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Section 3: Data Flow -->
+  <div class="section">
+    <div class="section-title">🔄 数据流图 (注册 & 登录)</div>
+    <div class="mermaid">
+sequenceDiagram
+    participant U as 👤 用户
+    participant F as 🖥️ 前端 Vue
+    participant A as 🔑 Auth API
+    participant D as 💾 SQLite DB
+    participant S as 🔐 bcrypt/JWT
+
+    Note over U,D: === 注册流程 ===
+    U->>F: 输入用户名/密码 → 点击注册
+    F->>A: POST /api/auth/register
+    A->>S: bcrypt.hash(password)
+    S-->>A: password_hash
+    A->>D: SELECT WHERE username=?
+    D-->>A: 无记录
+    A->>D: INSERT users
+    D-->>A: OK
+    A-->>F: {id, username}
+    F->>U: ✅ 跳转 /login
+
+    Note over U,D: === 登录流程 ===
+    U->>F: 输入用户名/密码 → 点击登录
+    F->>A: POST /api/auth/login {username, password}
+    A->>D: SELECT users WHERE username=?
+    D-->>A: user record
+    A->>S: bcrypt.compare(input, hash)
+    S-->>A: true
+    A->>S: jwt.encode({sub:id, username})
+    S-->>A: access_token
+    A-->>F: {access_token}
+    F->>F: localStorage.setItem(token)
+    F->>U: router.push("/") → Dashboard
+
+    Note over U,D: === 业务请求 ===
+    U->>F: 操作 Dashboard
+    F->>F: axios interceptor 附加 Bearer token
+    F->>A: GET/POST /api/... {Authorization}
+    A->>S: jwt.decode(token)
+    S-->>A: {sub:userId}
+    A->>D: CRUD transactions WHERE user_id=?
+    D-->>A: results
+    A-->>F: JSON response
+    F->>U: 更新页面/图表 ✅
+    </div>
+  </div>
+
+  <!-- Section 4: Animated Data Flow -->
+  <div class="section">
+    <div class="section-title">⚡ 实时数据流转</div>
+    <div class="flow-container">
+      <div class="data-flow">
+        <div class="data-node" style="border: 3px solid var(--blue);">
+          <div class="icon">🌐</div>
+          <div class="label">浏览器</div>
+        </div>
+        <div class="data-arrow">→</div>
+        <div class="data-node" style="border: 3px solid var(--green);">
+          <div class="icon">⚡</div>
+          <div class="label">Vite HMR</div>
+        </div>
+        <div class="data-arrow">→</div>
+        <div class="data-node" style="border: 3px solid var(--purple);">
+          <div class="icon">📦</div>
+          <div class="label">Vue SPA</div>
+        </div>
+        <div class="data-arrow">→</div>
+        <div class="data-node" style="border: 3px solid var(--amber);">
+          <div class="icon">🔀</div>
+          <div class="label">Proxy</div>
+        </div>
+        <div class="data-arrow">→</div>
+        <div class="data-node" style="border: 3px solid var(--red);">
+          <div class="icon">⚙️</div>
+          <div class="label">FastAPI</div>
+        </div>
+        <div class="data-arrow">→</div>
+        <div class="data-node" style="border: 3px solid var(--green);">
+          <div class="icon">💾</div>
+          <div class="label">SQLite</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Section 5: Full Process Flow -->
+  <div class="section">
+    <div class="section-title">📋 完整操作流程</div>
+    <div class="flow-container">
+      <div class="flow-step">
+        <div class="flow-num">①</div>
+        <div class="flow-content">
+          <h4>用户访问 http://localhost:5173</h4>
+          <p>Vite 返回 index.html，加载 Vue SPA 应用</p>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num green">②</div>
+        <div class="flow-content">
+          <h4>Vue Router 守卫检查 — 未登录 → /login</h4>
+          <p>检查 localStorage.getItem('token')，无则重定向到登录页</p>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num green">③</div>
+        <div class="flow-content">
+          <h4>用户在登录页输入用户名/密码</h4>
+          <p>Login.vue 通过 Axios POST /api/auth/login</p>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num amber">④</div>
+        <div class="flow-content">
+          <h4>FastAPI 查询数据库 + bcrypt 验证</h4>
+          <p>SELECT users → bcrypt.compare → 成功签发 JWT</p>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num amber">⑤</div>
+        <div class="flow-content">
+          <h4>返回 { access_token }，前端存入 localStorage</h4>
+          <p>localStorage.setItem('token', data.access_token)</p>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num green">⑥</div>
+        <div class="flow-content">
+          <h4>router.push('/') → Dashboard 加载</h4>
+          <p>axios interceptor 自动添加 Authorization: Bearer xxx</p>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num green">⑦</div>
+        <div class="flow-content">
+          <h4>并行请求: transactions, monthlyStats, trendData</h4>
+          <p>三个 API 并发调用，ECharts 渲染图表，显示统计卡片</p>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num amber">⑧</div>
+        <div class="flow-content">
+          <h4>用户记账 / 编辑 / 删除</h4>
+          <p>CRUD 操作通过 Axios 发送到后端，实时更新列表和图表</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Section 6: ER Diagram -->
+  <div class="section">
+    <div class="section-title">🗄️ 数据库 ER 图</div>
+    <div class="flow-container">
+      <div class="mermaid">
+erDiagram
+    USERS ||--o{ TRANSACTIONS : "has"
+    USERS {
+        int id PK "自增主键"
+        text username UK "唯一用户名"
+        text password_hash "bcrypt哈希"
+        timestamp created_at
+    }
+    TRANSACTIONS {
+        int id PK "自增主键"
+        int user_id FK "关联 users.id"
+        text type "income|expense"
+        text category "分类名称"
+        real amount "金额 > 0"
+        text note "备注"
+        text date "YYYY-MM-DD"
+        timestamp created_at
+    }
+      </div>
+    </div>
+  </div>
+
+  <!-- Section 7: API Table -->
+  <div class="section">
+    <div class="section-title">📡 API 接口清单</div>
+    <div class="flow-container">
+      <table>
+        <thead>
+          <tr>
+            <th>方法</th>
+            <th>路径</th>
+            <th>认证</th>
+            <th>说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>POST</td><td><span class="tag tag-blue">/api/auth/register</span></td><td>❌</td><td>注册新用户</td></tr>
+          <tr><td>POST</td><td><span class="tag tag-blue">/api/auth/login</span></td><td>❌</td><td>登录，获取 JWT token</td></tr>
+          <tr><td>GET</td><td><span class="tag tag-blue">/api/auth/me</span></td><td>✅</td><td>获取当前用户</td></tr>
+          <tr><td>POST</td><td><span class="tag tag-green">/api/transactions</span></td><td>✅</td><td>创建交易</td></tr>
+          <tr><td>GET</td><td><span class="tag tag-green">/api/transactions</span></td><td>✅</td><td>交易列表 (?month=YYYY-MM)</td></tr>
+          <tr><td>PUT</td><td><span class="tag tag-green">/api/transactions/:id</span></td><td>✅</td><td>更新交易</td></tr>
+          <tr><td>DELETE</td><td><span class="tag tag-green">/api/transactions/:id</span></td><td>✅</td><td>删除交易</td></tr>
+          <tr><td>GET</td><td><span class="tag tag-amber">/api/statistics/monthly</span></td><td>✅</td><td>月度收支汇总</td></tr>
+          <tr><td>GET</td><td><span class="tag tag-amber">/api/statistics/category-breakdown</span></td><td>✅</td><td>分类占比</td></tr>
+          <tr><td>GET</td><td><span class="tag tag-amber">/api/statistics/trend</span></td><td>✅</td><td>近6月趋势</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div style="text-align:center; padding: 2rem; color: var(--muted); border-top: 1px solid #E2E8F0; margin-top: 2rem;">
+    <p>📦 Expense Tracker v2.0 | Vue 3 + FastAPI + SQLite</p>
+    <p>架构文档 · <code>ARCHITECTURE.md</code></p>
+  </div>
+
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'default',
+    securityLevel: 'loose',
+    flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' },
+    sequence: { useMaxWidth: true, diagramMarginX: 50, diagramMarginY: 10 }
+  });
+</script>
+
+</body>
+</html>
