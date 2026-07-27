@@ -1,9 +1,10 @@
 import os
 import json
+import asyncio
 from decimal import Decimal
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from database import get_db
@@ -26,55 +27,201 @@ class AnalyzeRequest(BaseModel):
     year_month: str  # YYYY-MM
 
 
+# ============================================================
+# 工具定义（Tools）
+# ============================================================
+
+from crewai.tools import BaseTool
+from pydantic import Field
+
+
+class CategoryStatsTool(BaseTool):
+    """统计各分类消费占比的工具"""
+    name: str = "category_stats"
+    description: str = "统计各消费分类的金额和占比，返回 JSON 格式"
+
+    def _run(self, data_json: str) -> str:
+        """执行分类统计"""
+        try:
+            data = json.loads(data_json)
+            expense_by_category = data.get("expense_by_category", {})
+            total = sum(expense_by_category.values())
+
+            result = []
+            for cat, amt in sorted(expense_by_category.items(), key=lambda x: -x[1]):
+                pct = round((amt / total * 100), 1) if total > 0 else 0
+                result.append({"category": cat, "amount": amt, "percentage": pct})
+
+            return json.dumps({
+                "total_expense": total,
+                "categories": result,
+                "top_category": result[0]["category"] if result else "无",
+            }, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+
+class InflationEstimatorTool(BaseTool):
+    """估算各类别通胀影响的工具"""
+    name: str = "inflation_estimator"
+    description: str = "根据历史数据估算各类别的消费变化趋势（类似通胀影响）"
+
+    def _run(self, data_json: str) -> str:
+        """执行通胀估算"""
+        try:
+            data = json.loads(data_json)
+            history = data.get("history", [])
+
+            if len(history) < 2:
+                return json.dumps({"message": "历史数据不足，无法估算趋势"})
+
+            # 计算最近几个月的消费变化率
+            recent_expenses = [h["expense"] for h in history if h["expense"] > 0]
+            if len(recent_expenses) < 2:
+                return json.dumps({"message": "有效消费数据不足"})
+
+            # 计算平均变化率
+            changes = []
+            for i in range(1, len(recent_expenses)):
+                if recent_expenses[i - 1] > 0:
+                    change = (recent_expenses[i] - recent_expenses[i - 1]) / recent_expenses[i - 1]
+                    changes.append(change)
+
+            avg_change = sum(changes) / len(changes) if changes else 0
+
+            # 判断趋势
+            if avg_change > 0.05:
+                trend = "上升"
+            elif avg_change < -0.05:
+                trend = "下降"
+            else:
+                trend = "稳定"
+
+            return json.dumps({
+                "trend": trend,
+                "avg_monthly_change": round(avg_change * 100, 2),
+                "recent_expenses": recent_expenses,
+                "suggestion": f"消费整体{trend}，建议{'控制支出' if avg_change > 0 else '保持当前消费习惯'}",
+            }, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+
+class SpendingPatternTool(BaseTool):
+    """分析消费模式的工具"""
+    name: str = "spending_pattern"
+    description: str = "分析用户的消费模式，包括高频消费、大额消费、消费周期等"
+
+    def _run(self, data_json: str) -> str:
+        """分析消费模式"""
+        try:
+            data = json.loads(data_json)
+            transactions = data.get("recent_transactions", [])
+
+            if not transactions:
+                return json.dumps({"message": "无交易数据"})
+
+            # 按日期统计
+            daily = {}
+            for t in transactions:
+                day = t["date"][:10]  # YYYY-MM-DD
+                daily[day] = daily.get(day, 0) + t["amount"]
+
+            # 找出消费高峰日
+            peak_days = sorted(daily.items(), key=lambda x: -x[1])[:3]
+
+            # 大额消费（超过平均值2倍）
+            amounts = [t["amount"] for t in transactions]
+            avg = sum(amounts) / len(amounts) if amounts else 0
+            large_transactions = [t for t in transactions if t["amount"] > avg * 2]
+
+            # 高频消费类别
+            freq = {}
+            for t in transactions:
+                cat = t["category"]
+                freq[cat] = freq.get(cat, 0) + 1
+            frequent_cats = sorted(freq.items(), key=lambda x: -x[1])[:3]
+
+            return json.dumps({
+                "avg_daily Spending": round(avg, 2),
+                "peak_days": [{"date": d, "amount": round(a, 2)} for d, a in peak_days],
+                "large_transactions": [
+                    {"date": t["date"], "category": t["category"], "amount": t["amount"], "note": t["note"]}
+                    for t in large_transactions[:5]
+                ],
+                "frequent_categories": [{"category": c, "count": n} for c, n in frequent_cats],
+                "total_transactions": len(transactions),
+            }, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+
+# ============================================================
+# Agent 构建
+# ============================================================
+
 def _build_agents_and_crew(data_summary: str, year_month: str, api_key: str = ""):
-    """构建 CrewAI agents 和 crew"""
+    """构建 CrewAI agents 和 crew（支持委派、记忆、工具）"""
     from crewai import Agent, Task, Crew, Process, LLM
 
     # 初始化 LLM
     llm = LLM(
         model=DEFAULT_MODEL,
         temperature=0.3,
-        api_key=api_key or GROQ_API_KEY,
+        api_key=api_key or ZHIPUAI_API_KEY,
     )
 
-    # Agent 1: 趋势分析师
+    # 实例化工具
+    category_tool = CategoryStatsTool()
+    inflation_tool = InflationEstimatorTool()
+    pattern_tool = SpendingPatternTool()
+
+    # Agent 1: 趋势分析师（配备工具）
     trend_analyst = Agent(
         role="消费趋势分析师",
         goal="分析用户的消费趋势，识别消费模式和变化方向",
-        backstory="你是一位专业的消费趋势分析师，擅长从数据中发现消费模式和趋势变化。",
+        backstory="你是一位专业的消费趋势分析师，擅长从数据中发现消费模式和趋势变化。"
+                  "你可以使用工具来获取更精确的统计数据。",
         verbose=False,
-        allow_delegation=False,
+        allow_delegation=True,  # 允许委派给其他 Agent
         llm=llm,
+        tools=[category_tool, inflation_tool, pattern_tool],
     )
 
     # Agent 2: 异常检测专家
     anomaly_detector = Agent(
         role="消费异常检测专家",
         goal="检测异常消费行为，识别不合理的支出",
-        backstory="你是一位财务风控专家，擅长发现异常消费模式和潜在的财务风险。",
+        backstory="你是一位财务风控专家，擅长发现异常消费模式和潜在的财务风险。"
+                  "你可以使用工具来分析消费模式。",
         verbose=False,
-        allow_delegation=False,
+        allow_delegation=True,
         llm=llm,
+        tools=[pattern_tool, category_tool],
     )
 
     # Agent 3: 预算顾问
     budget_advisor = Agent(
         role="个人预算顾问",
         goal="提供预算管理建议，帮助用户合理分配资金",
-        backstory="你是一位资深的个人理财顾问，擅长制定切实可行的预算方案。",
+        backstory="你是一位资深的个人理财顾问，擅长制定切实可行的预算方案。"
+                  "你可以使用工具来获取精确的分类统计数据。",
         verbose=False,
-        allow_delegation=False,
+        allow_delegation=True,
         llm=llm,
+        tools=[category_tool, inflation_tool],
     )
 
     # Agent 4: 省钱教练
     savings_coach = Agent(
         role="省钱教练",
         goal="提供具体的省钱建议，帮助用户减少不必要的开支",
-        backstory="你是一位实用的省钱专家，总能找到既不影响生活质量又能节省开支的方法。",
+        backstory="你是一位实用的省钱专家，总能找到既不影响生活质量又能节省开支的方法。"
+                  "你可以使用工具来分析消费模式和趋势。",
         verbose=False,
-        allow_delegation=False,
+        allow_delegation=True,
         llm=llm,
+        tools=[category_tool, pattern_tool],
     )
 
     # Task 1: 趋势分析
@@ -83,11 +230,13 @@ def _build_agents_and_crew(data_summary: str, year_month: str, api_key: str = ""
 
 {data_summary}
 
-请分析：
+请使用工具获取精确的统计数据，然后分析：
 1. 消费总额和收入对比
 2. 主要消费类别分布
 3. 消费趋势（是否有增长/下降趋势）
 4. 消费习惯特点
+
+你可以先用 category_stats 工具获取分类统计，再用 inflation_estimator 工具估算趋势。
 
 输出格式（JSON）：
 {{
@@ -105,7 +254,7 @@ def _build_agents_and_crew(data_summary: str, year_month: str, api_key: str = ""
 
 {data_summary}
 
-请检测：
+请使用 spending_pattern 工具分析消费模式，然后检测：
 1. 单笔大额消费（超过月均消费2倍）
 2. 频繁小额消费（可能的冲动消费）
 3. 非常规类别消费
@@ -129,7 +278,7 @@ def _build_agents_and_crew(data_summary: str, year_month: str, api_key: str = ""
 
 {data_summary}
 
-请提供：
+请使用 category_stats 工具获取分类统计，然后提供：
 1. 各类别建议预算比例
 2. 当前预算执行情况
 3. 需要调整的类别
@@ -153,7 +302,7 @@ def _build_agents_and_crew(data_summary: str, year_month: str, api_key: str = ""
 
 {data_summary}
 
-请提供：
+请使用 spending_pattern 工具分析消费模式，然后提供：
 1. 可节省的消费领域
 2. 具体的省钱方法
 3. 预计可节省金额
@@ -170,16 +319,21 @@ def _build_agents_and_crew(data_summary: str, year_month: str, api_key: str = ""
         agent=savings_coach,
     )
 
-    # 创建 Crew
+    # 创建 Crew（层级模式 + 记忆）
     crew = Crew(
         agents=[trend_analyst, anomaly_detector, budget_advisor, savings_coach],
         tasks=[trend_task, anomaly_task, budget_task, savings_task],
-        process=Process.sequential,
+        process=Process.hierarchical,  # 层级模式：Manager Agent 协调任务分配
+        memory=True,                    # 启用记忆系统
         verbose=False,
     )
 
     return crew
 
+
+# ============================================================
+# 数据获取
+# ============================================================
 
 async def _fetch_user_data(user_id: int, year_month: str) -> dict:
     """获取用户当月的消费数据"""
@@ -256,13 +410,17 @@ async def _fetch_user_data(user_id: int, year_month: str) -> dict:
     return summary
 
 
+# ============================================================
+# API 路由
+# ============================================================
+
 @router.post("/analyze")
 async def analyze_expenses(
     request: AnalyzeRequest,
     current_user: dict = Depends(get_current_user),
     groq_api_key: str = None,
 ):
-    """多 Agent 消费分析"""
+    """多 Agent 消费分析（同步模式）"""
     api_key = groq_api_key or ZHIPUAI_API_KEY
     if not api_key:
         raise HTTPException(
@@ -300,7 +458,6 @@ async def analyze_expenses(
             raw = task_output.raw if hasattr(task_output, 'raw') else str(task_output)
             # 尝试提取 JSON
             try:
-                # 找到 JSON 部分
                 start = raw.find("{")
                 end = raw.rfind("}") + 1
                 if start >= 0 and end > start:
@@ -314,7 +471,6 @@ async def analyze_expenses(
                     elif i == 3:
                         analysis["savings"] = parsed
             except json.JSONDecodeError:
-                # JSON 解析失败，保留原始文本
                 key = ["trend", "anomaly", "budget", "savings"][i]
                 analysis[key] = {"raw_text": raw}
 
@@ -334,3 +490,143 @@ async def analyze_expenses(
             status_code=500,
             detail=f"AI 分析失败: {str(e)}",
         )
+
+
+# ============================================================
+# WebSocket 流式输出
+# ============================================================
+
+@router.websocket("/analyze/stream")
+async def analyze_stream(websocket: WebSocket):
+    """多 Agent 消费分析（WebSocket 流式模式）"""
+    await websocket.accept()
+
+    try:
+        # 接收请求数据
+        data = await websocket.receive_json()
+        year_month = data.get("year_month", "")
+        api_key = data.get("api_key", "") or ZHIPUAI_API_KEY
+        user_id = data.get("user_id")
+
+        if not api_key:
+            await websocket.send_json({
+                "type": "error",
+                "message": "请先设置智谱AI API Key",
+            })
+            await websocket.close()
+            return
+
+        # 发送开始消息
+        await websocket.send_json({
+            "type": "start",
+            "message": f"开始分析 {year_month} 消费数据...",
+        })
+
+        # 获取用户数据
+        await websocket.send_json({
+            "type": "progress",
+            "agent": "数据获取",
+            "status": "正在从数据库读取消费记录...",
+        })
+
+        user_data = await _fetch_user_data(user_id, year_month)
+
+        if user_data["transaction_count"] == 0:
+            await websocket.send_json({
+                "type": "error",
+                "message": f"{year_month} 暂无交易数据",
+            })
+            await websocket.close()
+            return
+
+        await websocket.send_json({
+            "type": "progress",
+            "agent": "数据获取",
+            "status": f"已获取 {user_data['transaction_count']} 条交易记录",
+        })
+
+        # 构建 CrewAI
+        data_summary = json.dumps(user_data, ensure_ascii=False, indent=2)
+        crew = _build_agents_and_crew(data_summary, year_month, api_key=api_key)
+
+        # 发送 Agent 启动消息
+        agent_names = ["趋势分析师", "异常检测专家", "预算顾问", "省钱教练"]
+        for name in agent_names:
+            await websocket.send_json({
+                "type": "agent_start",
+                "agent": name,
+                "status": f"{name} 已就绪，等待任务分配...",
+            })
+
+        # 执行分析（后台线程避免阻塞 WebSocket）
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, crew.kickoff)
+
+        # 发送完成消息
+        await websocket.send_json({
+            "type": "progress",
+            "agent": "Manager",
+            "status": "所有 Agent 分析完成，正在汇总结果...",
+        })
+
+        # 解析结果
+        analysis = {
+            "trend": None,
+            "anomaly": None,
+            "budget": None,
+            "savings": None,
+        }
+
+        tasks_output = result.tasks_output if hasattr(result, 'tasks_output') else []
+        for i, task_output in enumerate(tasks_output):
+            raw = task_output.raw if hasattr(task_output, 'raw') else str(task_output)
+            try:
+                start = raw.find("{")
+                end = raw.rfind("}") + 1
+                if start >= 0 and end > start:
+                    parsed = json.loads(raw[start:end])
+                    if i == 0:
+                        analysis["trend"] = parsed
+                    elif i == 1:
+                        analysis["anomaly"] = parsed
+                    elif i == 2:
+                        analysis["budget"] = parsed
+                    elif i == 3:
+                        analysis["savings"] = parsed
+            except json.JSONDecodeError:
+                key = ["trend", "anomaly", "budget", "savings"][i]
+                analysis[key] = {"raw_text": raw}
+
+            # 发送每个 Agent 完成消息
+            await websocket.send_json({
+                "type": "agent_complete",
+                "agent": agent_names[i],
+                "status": f"{agent_names[i]} 分析完成",
+            })
+
+        # 发送最终结果
+        await websocket.send_json({
+            "type": "complete",
+            "success": True,
+            "year_month": year_month,
+            "analysis": analysis,
+            "data_summary": {
+                "total_income": user_data["total_income"],
+                "total_expense": user_data["total_expense"],
+                "balance": user_data["balance"],
+            },
+        })
+
+        await websocket.close()
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "message": f"分析失败: {str(e)}",
+            })
+            await websocket.close()
+        except:
+            pass
