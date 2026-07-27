@@ -101,15 +101,49 @@
         </div>
 
         <!-- 分析中状态 -->
-        <div v-if="analyzing" class="p-8 text-center">
-          <div class="inline-flex items-center gap-3 text-indigo-500">
-            <svg class="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            <span>AI 团队正在分析您的消费数据...</span>
+        <div v-if="analyzing" class="p-6">
+          <div class="text-center mb-4">
+            <div class="inline-flex items-center gap-3 text-indigo-500">
+              <svg class="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span class="font-medium">AI 多 Agent 团队协作分析中...</span>
+            </div>
           </div>
-          <p class="text-sm text-gray-400 mt-2">4 个 AI Agent 协作分析中，预计需要 15-30 秒</p>
+
+          <!-- Agent 进度面板 -->
+          <div class="grid grid-cols-2 gap-3 max-w-lg mx-auto">
+            <div v-for="(status, agent) in agentStatuses" :key="agent"
+              class="flex items-center gap-2 p-3 rounded-lg border text-sm"
+              :class="{
+                'bg-indigo-50 border-indigo-200': status === 'working',
+                'bg-green-50 border-green-200': status === 'done',
+                'bg-gray-50 border-gray-200': status === 'pending'
+              }">
+              <span class="text-lg">
+                {{ status === 'done' ? '✅' : status === 'working' ? '⚡' : '⏳' }}
+              </span>
+              <span :class="{
+                'text-indigo-700': status === 'working',
+                'text-green-700': status === 'done',
+                'text-gray-500': status === 'pending'
+              }">{{ agent }}</span>
+            </div>
+          </div>
+
+          <!-- 实时日志 -->
+          <div v-if="agentLogs.length" class="mt-4 bg-gray-900 rounded-lg p-4 max-h-48 overflow-y-auto">
+            <div v-for="(log, i) in agentLogs" :key="i" class="text-xs font-mono"
+              :class="{
+                'text-green-400': log.type === 'complete',
+                'text-yellow-400': log.type === 'progress',
+                'text-red-400': log.type === 'error',
+                'text-gray-400': log.type === 'start' || log.type === 'agent_start'
+              }">
+              <span class="text-gray-500">[{{ log.agent }}]</span> {{ log.status }}
+            </div>
+          </div>
         </div>
 
         <!-- 分析结果 -->
@@ -293,6 +327,8 @@ const analysisResult = ref(null)
 const showKeyModal = ref(false)
 const keyInput = ref('')
 const groqKey = ref(localStorage.getItem('groq_api_key') || '')
+const agentStatuses = ref({})
+const agentLogs = ref([])
 
 function formatMoney(v) { return (v || 0).toFixed(2) }
 
@@ -371,6 +407,82 @@ async function runAIAnalysis() {
   if (!selectedMonth.value || !groqKey.value) return
   analyzing.value = true
   analysisResult.value = null
+  agentStatuses.value = {
+    '趋势分析师': 'pending',
+    '异常检测专家': 'pending',
+    '预算顾问': 'pending',
+    '省钱教练': 'pending',
+  }
+  agentLogs.value = []
+
+  try {
+    // 使用 WebSocket 流式模式
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const ws = new WebSocket(`${protocol}//${window.location.host}/api/ai/analyze/stream`)
+
+    ws.onopen = () => {
+      const userInfo = JSON.parse(localStorage.getItem('user') || '{}')
+      ws.send(JSON.stringify({
+        year_month: selectedMonth.value,
+        api_key: groqKey.value,
+        user_id: userInfo.id,
+      }))
+    }
+
+    ws.onmessage = (event) => {
+      const msg = JSON.parse(event.data)
+
+      // 记录日志
+      agentLogs.value.push({
+        type: msg.type,
+        agent: msg.agent || 'System',
+        status: msg.status || msg.message || '',
+      })
+
+      // 限制日志数量
+      if (agentLogs.value.length > 50) {
+        agentLogs.value = agentLogs.value.slice(-30)
+      }
+
+      // 更新 Agent 状态
+      if (msg.type === 'agent_start' && msg.agent) {
+        agentStatuses.value[msg.agent] = 'working'
+      } else if (msg.type === 'agent_complete' && msg.agent) {
+        agentStatuses.value[msg.agent] = 'done'
+      }
+
+      // 分析完成
+      if (msg.type === 'complete') {
+        analysisResult.value = msg
+        analyzing.value = false
+        ws.close()
+      }
+
+      // 错误
+      if (msg.type === 'error') {
+        analysisResult.value = { success: false, message: msg.message }
+        analyzing.value = false
+        ws.close()
+      }
+    }
+
+    ws.onerror = () => {
+      // WebSocket 失败，降级到 HTTP 模式
+      fallbackHTTP()
+    }
+
+    ws.onclose = () => {
+      if (analyzing.value) {
+        // 连接异常关闭，降级到 HTTP
+        fallbackHTTP()
+      }
+    }
+  } catch (e) {
+    fallbackHTTP()
+  }
+}
+
+async function fallbackHTTP() {
   try {
     const result = await analyzeExpenses(selectedMonth.value, groqKey.value)
     analysisResult.value = result
