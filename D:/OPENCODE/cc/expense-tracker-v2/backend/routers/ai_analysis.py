@@ -26,7 +26,7 @@ class AnalyzeRequest(BaseModel):
     year_month: str  # YYYY-MM
 
 
-def _build_agents_and_crew(data_summary: str, year_month: str):
+def _build_agents_and_crew(data_summary: str, year_month: str, api_key: str = ""):
     """构建 CrewAI agents 和 crew"""
     from crewai import Agent, Task, Crew, Process, LLM
 
@@ -34,7 +34,7 @@ def _build_agents_and_crew(data_summary: str, year_month: str):
     llm = LLM(
         model=DEFAULT_MODEL,
         temperature=0.3,
-        api_key=GROQ_API_KEY,
+        api_key=api_key or GROQ_API_KEY,
     )
 
     # Agent 1: 趋势分析师
@@ -260,12 +260,14 @@ async def _fetch_user_data(user_id: int, year_month: str) -> dict:
 async def analyze_expenses(
     request: AnalyzeRequest,
     current_user: dict = Depends(get_current_user),
+    groq_api_key: str = None,
 ):
     """多 Agent 消费分析"""
-    if not GROQ_API_KEY:
+    api_key = groq_api_key or GROQ_API_KEY
+    if not api_key:
         raise HTTPException(
-            status_code=500,
-            detail="AI 分析服务未配置，请设置 GROQ_API_KEY 环境变量",
+            status_code=400,
+            detail="请先设置 Groq API Key（免费获取：https://console.groq.com/keys）",
         )
 
     try:
@@ -280,7 +282,7 @@ async def analyze_expenses(
 
         # 构建 CrewAI
         data_summary = json.dumps(data, ensure_ascii=False, indent=2)
-        crew = _build_agents_and_crew(data_summary, request.year_month)
+        crew = _build_agents_and_crew(data_summary, request.year_month, api_key=api_key)
 
         # 执行分析
         result = crew.kickoff()
