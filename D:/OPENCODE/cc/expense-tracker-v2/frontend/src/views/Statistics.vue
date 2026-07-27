@@ -86,12 +86,18 @@
       <div class="bg-white rounded-xl shadow-sm border">
         <div class="px-5 py-4 border-b flex items-center justify-between">
           <h2 class="font-semibold text-gray-800">🤖 AI 智能分析</h2>
-          <button @click="runAIAnalysis"
-            :disabled="analyzing"
-            :class="['px-4 py-2 rounded-lg text-sm font-medium transition',
-              analyzing ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-indigo-500 text-white hover:bg-indigo-600']">
-            {{ analyzing ? '分析中...' : '开始分析' }}
-          </button>
+          <div class="flex items-center gap-2">
+            <button @click="showKeyModal = true"
+              class="px-3 py-1.5 rounded-lg text-xs font-medium transition bg-gray-100 text-gray-600 hover:bg-gray-200">
+              {{ groqKey ? '🔑 已设置' : '🔑 设置 Key' }}
+            </button>
+            <button @click="runAIAnalysis"
+              :disabled="analyzing || !groqKey"
+              :class="['px-4 py-2 rounded-lg text-sm font-medium transition',
+                (analyzing || !groqKey) ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-indigo-500 text-white hover:bg-indigo-600']">
+              {{ analyzing ? '分析中...' : '开始分析' }}
+            </button>
+          </div>
         </div>
 
         <!-- 分析中状态 -->
@@ -236,10 +242,28 @@
 
         <!-- 无数据提示 -->
         <div v-else class="p-8 text-center text-gray-400">
-          点击"开始分析"，AI 团队将为您的消费数据提供深度洞察
+          <p v-if="!groqKey">请先设置 Groq API Key（免费获取）</p>
+          <p v-else>点击"开始分析"，AI 团队将为您的消费数据提供深度洞察</p>
         </div>
       </div>
     </main>
+
+    <!-- Groq Key 设置弹窗 -->
+    <div v-if="showKeyModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl">
+        <h3 class="text-lg font-bold text-gray-800 mb-2">设置 Groq API Key</h3>
+        <p class="text-sm text-gray-500 mb-4">
+          免费获取：<a href="https://console.groq.com/keys" target="_blank" class="text-indigo-500 underline">console.groq.com/keys</a>
+          <br>注册后点击"Create API Key"即可，无需信用卡。
+        </p>
+        <input v-model="keyInput" type="password" placeholder="gsk_xxxxxxxxxxxx..."
+          class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+        <div class="flex justify-end gap-3 mt-5">
+          <button @click="showKeyModal = false" class="px-4 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-100">取消</button>
+          <button @click="saveGroqKey" class="px-4 py-2 rounded-lg text-sm bg-indigo-500 text-white hover:bg-indigo-600">保存</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -266,6 +290,9 @@ const stats = ref({ monthlyStats: { totalIncome: 0, totalExpense: 0, balance: 0 
 const catList = ref([])
 const analyzing = ref(false)
 const analysisResult = ref(null)
+const showKeyModal = ref(false)
+const keyInput = ref('')
+const groqKey = ref(localStorage.getItem('groq_api_key') || '')
 
 function formatMoney(v) { return (v || 0).toFixed(2) }
 
@@ -341,16 +368,25 @@ async function handleLogout() {
 }
 
 async function runAIAnalysis() {
-  if (!selectedMonth.value) return
+  if (!selectedMonth.value || !groqKey.value) return
   analyzing.value = true
   analysisResult.value = null
   try {
-    const result = await analyzeExpenses(selectedMonth.value)
+    const result = await analyzeExpenses(selectedMonth.value, groqKey.value)
     analysisResult.value = result
   } catch (e) {
     analysisResult.value = { success: false, message: e.response?.data?.detail || '分析失败，请稍后重试' }
   } finally {
     analyzing.value = false
+  }
+}
+
+function saveGroqKey() {
+  if (keyInput.value.trim()) {
+    groqKey.value = keyInput.value.trim()
+    localStorage.setItem('groq_api_key', groqKey.value)
+    showKeyModal.value = false
+    keyInput.value = ''
   }
 }
 
