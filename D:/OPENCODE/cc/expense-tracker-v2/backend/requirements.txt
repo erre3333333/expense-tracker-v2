@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+aiosqlite
+pydantic
+python-jose[cryptography]
+passlib[bcrypt]==1.7.4
+python-multipart
+bcrypt==4.0.1
+crewai[litellm]
