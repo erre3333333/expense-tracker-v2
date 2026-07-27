@@ -12,9 +12,10 @@ from routers.auth import get_current_user
 
 router = APIRouter(prefix="/api/ai", tags=["ai-analysis"])
 
-# 智谱AI 免费层配置（GLM-4-Flash 永久免费）
-ZHIPUAI_API_KEY = os.environ.get("ZHIPUAI_API_KEY", "")
-DEFAULT_MODEL = "glm-4-flash"
+# AI 大模型配置（Agnes AI 免费层）
+AGNES_API_KEY = os.environ.get("AGNES_API_KEY", "sk-yNyarp9QLUZV8NYybNl1x8LbRPg2QzwfvsfB7iJXJ5nm971j")
+AGNES_BASE_URL = "https://apihub.agnes-ai.com/v1"
+DEFAULT_MODEL = "agnes-2.0-flash"
 
 
 def _to_float(val) -> float:
@@ -168,7 +169,8 @@ def _build_agents_and_crew(data_summary: str, year_month: str, api_key: str = ""
     llm = LLM(
         model=DEFAULT_MODEL,
         temperature=0.3,
-        api_key=api_key or ZHIPUAI_API_KEY,
+        api_key=api_key or AGNES_API_KEY,
+        base_url=AGNES_BASE_URL,
     )
 
     # 实例化工具
@@ -421,11 +423,11 @@ async def analyze_expenses(
     groq_api_key: str = None,
 ):
     """多 Agent 消费分析（同步模式）"""
-    api_key = groq_api_key or ZHIPUAI_API_KEY
+    api_key = groq_api_key or AGNES_API_KEY
     if not api_key:
         raise HTTPException(
             status_code=400,
-            detail="请先设置智谱AI API Key（免费获取：https://open.bigmodel.cn/）",
+            detail="请先设置 API Key",
         )
 
     try:
