@@ -253,10 +253,10 @@
       <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl">
         <h3 class="text-lg font-bold text-gray-800 mb-2">设置 Groq API Key</h3>
         <p class="text-sm text-gray-500 mb-4">
-          免费获取：<a href="https://console.groq.com/keys" target="_blank" class="text-indigo-500 underline">console.groq.com/keys</a>
-          <br>注册后点击"Create API Key"即可，无需信用卡。
+          免费获取：<a href="https://open.bigmodel.cn/" target="_blank" class="text-indigo-500 underline">open.bigmodel.cn</a>
+          <br>注册后在"API密钥管理"创建即可，GLM-4-Flash 永久免费。
         </p>
-        <input v-model="keyInput" type="password" placeholder="gsk_xxxxxxxxxxxx..."
+        <input v-model="keyInput" type="password" placeholder="输入你的智谱AI API Key..."
           class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
         <div class="flex justify-end gap-3 mt-5">
           <button @click="showKeyModal = false" class="px-4 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-100">取消</button>
