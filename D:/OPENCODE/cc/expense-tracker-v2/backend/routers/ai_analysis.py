@@ -11,9 +11,9 @@ from routers.auth import get_current_user
 
 router = APIRouter(prefix="/api/ai", tags=["ai-analysis"])
 
-# Groq 免费层配置
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
-DEFAULT_MODEL = "groq/llama-3.3-70b-versatile"
+# 智谱AI 免费层配置（GLM-4-Flash 永久免费）
+ZHIPUAI_API_KEY = os.environ.get("ZHIPUAI_API_KEY", "")
+DEFAULT_MODEL = "glm-4-flash"
 
 
 def _to_float(val) -> float:
@@ -263,11 +263,11 @@ async def analyze_expenses(
     groq_api_key: str = None,
 ):
     """多 Agent 消费分析"""
-    api_key = groq_api_key or GROQ_API_KEY
+    api_key = groq_api_key or ZHIPUAI_API_KEY
     if not api_key:
         raise HTTPException(
             status_code=400,
-            detail="请先设置 Groq API Key（免费获取：https://console.groq.com/keys）",
+            detail="请先设置智谱AI API Key（免费获取：https://open.bigmodel.cn/）",
         )
 
     try:
