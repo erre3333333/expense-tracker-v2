@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.venv/
+
+# Database
+*.db
+data/
+
+# Node
+node_modules/
+
+# Frontend build (will be built during Railway deploy)
+frontend/dist/
+
+# Env
+.env
