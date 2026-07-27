@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Expense Tracker v2 — 函数调用关系与前后端连接图</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+:root {
+  --blue: #3B82F6; --green: #10B981; --amber: #F59E0B; --red: #EF4444;
+  --purple: #8B5CF6; --indigo: #4F46E5; --slate: #64748B; --dark: #1E293B;
+  --bg: #F1F5F9; --card: #FFFFFF; --border: #E2E8F0;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+html { scroll-behavior: smooth; font-family: -apple-system, "Noto Sans SC", "Microsoft YaHei", sans-serif; }
+body { background: var(--bg); color: var(--dark); line-height: 1.6; padding-bottom: 48px; }
+
+.navbar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  background: rgba(30,41,59,0.95); backdrop-filter: blur(8px);
+  border-bottom: 1px solid rgba(255,255,255,0.1); padding: 0 2rem; height: 48px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.navbar .brand { color: white; font-size: 0.85rem; font-weight: 700; letter-spacing: -0.01em; }
+.navbar .nav-links { display: flex; gap: 1.5rem; }
+.navbar .nav-links a {
+  color: rgba(255,255,255,0.6); text-decoration: none; font-size: 0.75rem;
+  transition: color 0.2s;
+}
+.navbar .nav-links a:hover, .navbar .nav-links a.active { color: white; }
+
+.main { padding-top: 48px; max-width: 1200px; margin: 0 auto; padding-left: 2rem; padding-right: 2rem; }
+.section { margin-bottom: 64px; }
+.section-title { font-size: 1.2rem; font-weight: 700; margin-bottom: 8px; color: var(--dark); }
+.section-subtitle { font-size: 0.85rem; color: var(--slate); margin-bottom: 24px; }
+
+.diagram-box {
+  background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+  padding: 24px; overflow-x: auto; position: relative;
+}
+.diagram-label {
+  position: absolute; top: 12px; right: 16px;
+  font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--slate); background: var(--bg); padding: 2px 8px; border-radius: 4px;
+}
+
+.node {
+  padding: 8px 12px; border-radius: 6px; font-size: 0.8rem; font-weight: 500;
+  transition: all 0.2s ease; cursor: default;
+}
+.node:hover { transform: translateX(4px); box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+.node.blue { background: #DBEAFE; color: #1E40AF; border: 1px solid #93C5FD; }
+.node.green { background: #D1FAE5; color: #065F46; border: 1px solid #6EE7B7; }
+.node.amber { background: #FEF3C7; color: #92400E; border: 1px solid #FCD34D; }
+.node.red { background: #FEE2E2; color: #991B1B; border: 1px solid #FCA5A5; }
+.node.purple { background: #EDE9FE; color: #6B21A8; border: 1px solid #A78BFA; }
+
+.connection {
+  stroke: var(--slate); stroke-width: 1.5; fill: none; marker-end: url(#arrowhead);
+}
+.connection.highlighted { stroke: var(--blue); stroke-width: 2; }
+
+.info-panel {
+  margin-top: 24px; padding: 16px; background: #F8FAFC; border-left: 3px solid var(--blue);
+  font-size: 0.85rem; color: var(--slate);
+}
+
+@media (max-width: 768px) {
+  .main { padding-left: 1rem; padding-right: 1rem; }
+  .navbar { padding: 0 1rem; height: 40px; }
+  .navbar .brand { font-size: 0.75rem; }
+  .navbar .nav-links { display: none; }
+}
+</style>
+</head>
+<body>
+
+<nav class="navbar">
+  <span class="brand">Expense Tracker v2 — 系统架构图</span>
+  <div class="nav-links">
+    <a href="#backend-call" class="nav-link">后端调用关系</a>
+    <a href="#frontend-backend" class="nav-link">前后端连接</a>
+    <a href="#api-map" class="nav-link">API 映射表</a>
+  </div>
+</nav>
+
+<div class="main">
+
+  <div class="section">
+    <div class="section-title">系统架构图</div>
+    <div class="section-subtitle">Expense Tracker v2.0 — Vue 3 + FastAPI + SQLite</div>
+
+    <div class="diagram-box" data-label="System Architecture">
+      <svg width="100%" height="320" style="min-width:600px;">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+            <polygon points="0 0, 10 3, 0 6" fill="#64748B" />
+          </marker>
+        </defs>
+
+        <!-- Top row: Presentation Layer -->
+        <g class="layer">
+          <rect x="20" y="10" width="100" height="40" fill="#F1F5F9" stroke="#CBD5E1" rx="6"/>
+          <text x="70" y="35" text-anchor="middle" font-size="0.75rem" fill="#475569" font-weight="600">展示层</text>
+        </g>
+
+        <text x="70" y="65" text-anchor="middle" font-size="0.7rem" fill="#64748B">🌐 浏览器</text>
+        <line x1="70" y1="50" x2="70" y2="70" class="connection"/>
+
+        <!-- Second row: Vite -->
+        <g class="layer">
+          <rect x="20" y="80" width="100" height="40" fill="#F1F5F9" stroke="#CBD5E1" rx="6"/>
+          <text x="70" y="105" text-anchor="middle" font-size="0.75rem" fill="#475569" font-weight="600">Vite Proxy</text>
+        </g>
+
+        <text x="70" y="135" text-anchor="middle" font-size="0.7rem" fill="#64748B">5173 → /api → 8001</text>
+        <line x1="70" y1="120" x2="70" y2="140" class="connection"/>
+
+        <!-- Third row: Backend -->
+        <g class="layer">
+          <rect x="20" y="150" width="280" height="60" fill="#F1F5F9" stroke="#CBD5E1" rx="6"/>
+          <text x="160" y="180" text-anchor="middle" font-size="0.75rem" fill="#475569" font-weight="600">FastAPI :8001</text>
+        </g>
+
+        <text x="160" y="230" text-anchor="middle" font-size="0.7rem" fill="#64748B">auth / transactions / statistics 路由</text>
+        <line x1="160" y1="210" x2="160" y2="230" class="connection"/>
+
+        <!-- Bottom: Database -->
+        <g class="layer">
+          <rect x="20" y="250" width="100" height="40" fill="#F1F5F9" stroke="#CBD5E1" rx="6"/>
+          <text x="70" y="275" text-anchor="middle" font-size="0.75rem" fill="#475569" font-weight="600">SQLite</text>
+        </g>
+
+        <text x="70" y="305" text-anchor="middle" font-size="0.7rem" fill="#64748B">expenses.db</text>
+
+        <!-- Arrows -->
+        <line x1="70" y1="55" x2="70" y2="80" class="connection"/>
+        <line x1="70" y1="105" x2="70" y2="150" class="connection"/>
+        <line x1="70" y1="180" x2="160" y2="180" class="connection"/>
+        <line x1="160" y1="195" x2="70" y2="250" class="connection"/>
+      </svg>
+    </div>
+
+    <div class="info-panel">
+      <strong>架构说明：</strong>四层设计（展示层 → 代理层 → 应用层 → 数据层），前端 Vue 通过 Vite 的 API 代理将 /api 请求转发到后端 FastAPI，后端通过 aiosqlite 异步连接 SQLite 数据库存储用户和交易数据。
+    </div>
+  </div>
+
+  <!-- ==================== Backend Call Hierarchy ==================== -->
+  <div class="section" id="backend-call">
+    <div class="section-title">函数调用关系图</div>
+    <div class="section-subtitle">后端 FastAPI 模块间的函数调用层级</div>
+
+    <div class="diagram-box" data-label="Backend Call Hierarchy">
+      <pre class="mermaid">
+graph TD
+  subgraph Entry["main.py"]
+    A["FastAPI app<br/>CORS middleware"]
+    B["include_router auth"]
+    C["include_router transactions"]
+    D["include_router statistics"]
+    A --> B
+    A --> C
+    A --> D
+  end
+
+  subgraph Auth["auth.py"]
+    E["register<br/>POST /register"]
+    F["login<br/>POST /login"]
+    G["get_me<br/>GET /me"]
+    H["create_access_token"]
+    I["jwt.decode"]
+    J["bcrypt.verify"]
+    K["_connect"]
+    E --> K
+    E --> bcrypt.hash
+    F --> K
+    F --> J
+    F --> H
+    G --> I
+    G --> K
+    H --> I
+  end
+
+  subgraph Txn["transactions.py"]
+    L["create_transaction"]
+    M["list_transactions"]
+    N["get_transaction"]
+    O["update_transaction"]
+    P["delete_transaction"]
+    L --> K
+    M --> K
+    N --> K
+    O --> K
+    P --> K
+  end
+
+  subgraph Stats["statistics.py"]
+    Q["get_monthly_stats"]
+    R["get_category_breakdown"]
+    S["get_trend_data"]
+    Q --> K
+    R --> K
+    S --> K
+  end
+
+  subgraph DB["database.py"]
+    K["_connect / get_db"]
+    K --> aiosqlite.connect
+  end
+
+  B --> E & F & G
+  C --> L & M & N & O & P
+  D --> Q & R & S
+
+  style Entry fill:#EFF6FF,stroke:#3B82F6
+  style Auth fill:#D1FAE5,stroke:#1B82F6
+  style Txn fill:#FEF3C7,stroke:#F59E0B
+  style Stats fill:#EDE9FE,stroke:#8B5CF6
+  style DB fill:#FEE2E2,stroke:#EF4444
+  style A fill:#E0E7FF,stroke:#4F46E5
+  style K fill:#FECACA,stroke:#DC2626
+
+      </pre>
+    </div>
+
+    <div class="info-panel">
+      <strong>调用说明：</strong>main.py 作为入口，通过 include_router 将三个模块注册到 FastAPI。各路由器依赖 _connect（数据库连接池）和 _connect_context（async context manager）进行数据库操作。auth.py 独立使用 passlib/bcrypt 进行密码哈希和验证，使用 python-jose 进行 JWT 编码解码。
+    </div>
+  </div>
+
+  <!-- ==================== Frontend-Backend Connection ==================== -->
+  <div class="section" id="frontend-backend">
+    <div class="section-title">前端-后端连接图</div>
+    <div class="section-subtitle">Vue 组件通过 Axios 调用 FastAPI 接口的完整流程</div>
+
+    <div class="diagram-box" data-label="Frontend-Backend Connection">
+      <pre class="mermaid">
+graph LR
+  subgraph Frontend["Vue Frontend (5173)"]
+    F1["Dashboard.vue"]:::blue
+    F2["Transactions.vue"]:::blue
+    F3["Statistics.vue"]:::blue
+    F4["Login.vue"]:::blue
+    F5["Register.vue"]:::blue
+    F6["Axios interceptor"]:::blue
+    F7["localStorage"]:::purple
+  end
+
+  subgraph Proxy["Vite Proxy"]
+    P["/api → localhost:8001"]:::green
+  end
+
+  subgraph Backend["FastAPI (8001)"]
+    B1["/api/auth/register/"]:::amber
+    B2["/api/auth/login/"]:::amber
+    B3["/api/auth/me/"]:::amber
+    B4["/api/transactions/"]:::amber
+    B5["/api/statistics/"]:::amber
+  end
+
+  F1 --> F6
+  F2 --> F6
+  F3 --> F6
+  F4 --> F6
+  F5 --> F6
+
+  F6 --> P
+  P --> B1
+  P --> B2
+  P --> B3
+  P --> B4
+  P --> B5
+
+  F7 --> F6
+
+  F4 -->|POST /api/auth/register| B1
+  F5 -->|POST /api/auth/register| B1
+  F4 -->|POST /api/auth/login| B2
+  F2 -->|POST /api/transactions| B4
+  F1 -->|GET /api/transactions| B4
+  F3 -->|GET /api/statistics/monthly| B5
+  F3 -->|GET /api/statistics/category| B5
+  F3 -->|GET /api/statistics/trend| B5
+
+  style Frontend fill:#EFF6FF,stroke:#3B82F6
+  style Proxy fill:#D1FAE5,stroke:#1B82F6
+  style Backend fill:#FEF3C7,stroke:#F59E0B
+
+  classDef blue fill:#DBEAFE,stroke:#3B82F6,stroke-width:1.5px,fill-opacity:0.8;
+  classDef green fill:#D1FAE5,stroke:#1B82F6,stroke-width:1.5px,fill-opacity:0.8;
+  classDef amber fill:#FEF3C7,stroke:#F59E0B,stroke-width:1.5px,fill-opacity:0.8;
+  classDef purple fill:#EDE9FE,stroke:#8B5CF6,stroke-width:1.5px,fill-opacity:0.8;
+
+      </pre>
+    </div>
+
+    <div class="info-panel">
+      <strong>流程说明：</strong>前端组件调用 api/index.js 封装的 Axios 方法，请求拦截器自动从 localStorage 读取 token 并添加到 Authorization 头部。Vite 开发服务器的代理配置将 /api 路径的请求转发到本地 8001 端口的 FastAPI 服务。FastAPI 通过路由分发到对应的控制器，处理完后返回 JSON 响应给前端，前端接收后更新 UI。
+    </div>
+  </div>
+
+  <!-- ==================== API Mapping Table ==================== -->
+  <div class="section" id="api-map">
+    <div class="section-title">API 接口映射表</div>
+    <div class="section-subtitle">前端组件到后端路由的完整映射</div>
+
+    <div class="diagram-box" data-label="API Mapping Table">
+      <table style="width:100%; font-size:0.8rem; border-collapse:collapse;">
+        <thead>
+          <tr style="background:#F1F5F9; font-weight:600;">
+            <th style="padding:8px; text-align:left; border:1px solid #E2E8F0;">前端组件</th>
+            <th style="padding:8px; text-align:left; border:1px solid #E2E8F0;">后端路径</th>
+            <th style="padding:8px; text-align:left; border:1px solid #E2E8F0;">HTTP 方法</th>
+            <th style="padding:8px; text-align:left; border:1px solid #E2E8F0;">功能说明</th>
+            <th style="padding:8px; text-align:left; border:1px solid #E2E8F0;">认证需求</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="border:1px solid #E2E8F0;">
+            <td style="padding:8px;">Register.vue</td>
+            <td style="padding:8px;">/api/auth/register</td>
+            <td style="padding:8px;">POST</td>
+            <td style="padding:8px;">注册新用户</td>
+            <td style="padding:8px;">❌ 无需认证</td>
+          </tr>
+          <tr style="border:1px solid #E2E8F0;">
+            <td style="padding:8px;">Login.vue</td>
+            <td style="padding:8px;">/api/auth/login</td>
+            <td style="padding:8px;">POST</td>
+            <td style="padding:8px;">登录获取 JWT</td>
+            <td style="padding:8px;">❌ 无需认证</td>
+          </tr>
+          <tr style="border:1px solid #E2E8F0;">
+            <td style="padding:8px;">所有页面</td>
+            <td style="padding:8px;">/api/auth/me</td>
+            <td style="padding:8px;">GET</td>
+            <td style="padding:8px;">获取当前用户</td>
+            <td style="padding:8px;">✅ Bearer Token</td>
+          </tr>
+          <tr style="border:1px solid #E2E8F0;">
+            <td style="padding:8px;">Dashboard.vue</td>
+            <td style="padding:8px;">/api/transactions</td>
+            <td style="padding:8px;">GET</td>
+            <td style="padding:8px;">获取交易列表</td>
+            <td style="padding:8px;">✅ Bearer Token</td>
+          </tr>
+          <tr style="border:1px solid #E2E8F0;">
+            <td style="padding:8px;">Dashboard.vue</td>
+            <td style="padding:8px;">/api/statistics/monthly</td>
+            <td style="padding:8px;">GET</td>
+            <td style="padding:8px;">月度统计</td>
+            <td style="padding:8px;">✅ Bearer Token</td>
+          </tr>
+          <tr style="border:1px solid #E2E8F0;">
+            <td style="padding:8px;">Dashboard.vue</td>
+            <td style="padding:8px;">/api/statistics/trend</td>
+            <td style="padding:8px;">GET</td>
+            <td style="padding:8px;">6个月趋势</td>
+            <td style="padding:8px;">✅ Bearer Token</td>
+          </tr>
+          <tr style="border:1px solid #E2E8F0;">
+            <td style="padding:8px;">Transactions.vue</td>
+            <td style="padding:8px;">/api/transactions</td>
+            <td style="padding:8px;">POST</td>
+            <td style="padding:8px;">创建交易</td>
+            <td style="padding:8px;">✅ Bearer Token</td>
+          </tr>
+          <tr style="border:1px solid #E2E8F0;">
+            <td style="padding:8px;">Transactions.vue</td>
+            <td style="padding:8px;">/api/transactions/:id</td>
+            <td style="padding:8px;">PUT</td>
+            <td style="padding:8px;">更新交易</td>
+            <td style="padding:8px;">✅ Bearer Token</td>
+          </tr>
+          <tr style="border:1px solid #E2E8F0;">
+            <td style="padding:8px;">Transactions.vue</td>
+            <td style="padding:8px;">/api/transactions/:id</td>
+            <td style="padding:8px;">DELETE</td>
+            <td style="padding:8px;">删除交易</td>
+            <td style="padding:8px;">✅ Bearer Token</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div style="margin-top:64px; text-align:center; color:#64748B; font-size:0.8rem;">
+    生成时间: 2026-07-26 | 技术文档: Expense Tracker v2.0
+  </div>
+
+</div>
+
+<script>
+  // Initialize Mermaid
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'default',
+    securityLevel: 'loose',
+    flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' },
+    sequence: { diagramMarginX: 60, diagramMarginY: 16 }
+  });
+
+  // Highlight connections on hover
+  document.addEventListener('DOMContentLoaded', () => {
+    const diagrams = document.querySelectorAll('.mermaid');
+    diagrams.forEach(diagram => {
+      diagram.addEventListener('mouseover', () => {
+        // Optional: add subtle hover effect
+      });
+    });
+  });
+</script>
+
+</body>
+</html>
