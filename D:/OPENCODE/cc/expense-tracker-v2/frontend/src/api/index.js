@@ -97,7 +97,10 @@ export async function getTrendData() {
   return data
 }
 
-export async function analyzeExpenses(yearMonth) {
-  const { data } = await api.post('/ai/analyze', { year_month: yearMonth })
+export async function analyzeExpenses(yearMonth, groqApiKey) {
+  const { data } = await api.post('/ai/analyze', {
+    year_month: yearMonth,
+    groq_api_key: groqApiKey,
+  })
   return data
 }
