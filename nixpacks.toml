@@ -2,7 +2,7 @@
 # Installs Node.js (for frontend) and Python (for backend)
 
 [phases.setup]
-nixPkgs = ["nodejs_20", "python3", "pip"]
+nixPkgs = ["nodejs_20", "python3"]
 
 [phases.build]
 cmds = [
