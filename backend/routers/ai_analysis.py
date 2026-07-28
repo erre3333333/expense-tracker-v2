@@ -47,7 +47,7 @@ if _CREWAI_AVAILABLE:
         data_json: str = Field(description="消费数据 JSON 字符串")
 
     class CategoryStatsTool(BaseTool):
-        name: str = "分类统计"
+        name: str = "category_stats"
         description: str = "统计各分类消费占比，返回总消费、各分类金额和占比"
         args_schema: Type[BaseModel] = CategoryStatsInput
 
@@ -69,7 +69,7 @@ if _CREWAI_AVAILABLE:
         data_json: str = Field(description="消费数据 JSON 字符串")
 
     class SpendingPatternTool(BaseTool):
-        name: str = "消费模式分析"
+        name: str = "spending_pattern"
         description: str = "分析消费模式：日均消费、消费高峰日、大额交易、高频分类"
         args_schema: Type[BaseModel] = SpendingPatternInput
 
@@ -100,7 +100,7 @@ if _CREWAI_AVAILABLE:
         data_json: str = Field(description="消费数据 JSON 字符串")
 
     class TrendTool(BaseTool):
-        name: str = "趋势分析"
+        name: str = "trend_analysis"
         description: str = "分析消费趋势：月度变化、环比增长率、趋势方向"
         args_schema: Type[BaseModel] = TrendInput
 
