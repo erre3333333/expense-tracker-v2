@@ -2,10 +2,9 @@ import os
 import json
 import asyncio
 from decimal import Decimal
-from typing import Type
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from database import get_db
 from routers.auth import get_current_user
@@ -16,15 +15,6 @@ router = APIRouter(prefix="/api/ai", tags=["ai-analysis"])
 AGNES_API_KEY = os.environ.get("AGNES_API_KEY", "sk-yNyarp9QLUZV8NYybNl1x8LbRPg2QzwfvsfB7iJXJ5nm971j")
 AGNES_BASE_URL = "https://apihub.agnes-ai.com/v1"
 DEFAULT_MODEL = "agnes-2.0-flash"
-
-# CrewAI 懒加载
-_CREWAI_AVAILABLE = False
-try:
-    from crewai import Agent, Task, Crew, Process, LLM
-    from crewai.tools import BaseTool
-    _CREWAI_AVAILABLE = True
-except ImportError:
-    BaseTool = object
 
 
 def _to_float(val) -> float:
@@ -38,193 +28,7 @@ class AnalyzeRequest(BaseModel):
 
 
 # ============================================================
-# CrewAI 工具定义
-# ============================================================
-
-if _CREWAI_AVAILABLE:
-
-    class CategoryStatsInput(BaseModel):
-        data_json: str = Field(description="消费数据 JSON 字符串")
-
-    class CategoryStatsTool(BaseTool):
-        name: str = "category_stats"
-        description: str = "统计各分类消费占比，返回总消费、各分类金额和占比"
-        args_schema: Type[BaseModel] = CategoryStatsInput
-
-        def _run(self, data_json: str, **kwargs) -> str:
-            data = json.loads(data_json)
-            expense_by_category = data.get("expense_by_category", {})
-            total = sum(expense_by_category.values())
-            result = []
-            for cat, amt in sorted(expense_by_category.items(), key=lambda x: -x[1]):
-                pct = round((amt / total * 100), 1) if total > 0 else 0
-                result.append({"category": cat, "amount": amt, "percentage": pct})
-            return json.dumps({
-                "total_expense": total,
-                "categories": result,
-                "top_category": result[0]["category"] if result else "无",
-            }, ensure_ascii=False)
-
-    class SpendingPatternInput(BaseModel):
-        data_json: str = Field(description="消费数据 JSON 字符串")
-
-    class SpendingPatternTool(BaseTool):
-        name: str = "spending_pattern"
-        description: str = "分析消费模式：日均消费、消费高峰日、大额交易、高频分类"
-        args_schema: Type[BaseModel] = SpendingPatternInput
-
-        def _run(self, data_json: str, **kwargs) -> str:
-            data = json.loads(data_json)
-            txns = data.get("recent_transactions", [])
-            if not txns:
-                return json.dumps({"message": "无交易数据"}, ensure_ascii=False)
-            daily = {}
-            for t in txns:
-                day = t["date"][:10]
-                daily[day] = daily.get(day, 0) + t["amount"]
-            peak = sorted(daily.items(), key=lambda x: -x[1])[:3]
-            amounts = [t["amount"] for t in txns]
-            avg = sum(amounts) / len(amounts) if amounts else 0
-            large = [t for t in txns if t["amount"] > avg * 2]
-            freq = {}
-            for t in txns:
-                freq[t["category"]] = freq.get(t["category"], 0) + 1
-            return json.dumps({
-                "avg_daily_spending": round(avg, 2),
-                "peak_days": [{"date": d, "amount": round(a, 2)} for d, a in peak],
-                "large_transactions": [{"date": t["date"], "category": t["category"], "amount": t["amount"], "note": t["note"]} for t in large[:5]],
-                "frequent_categories": sorted(freq.items(), key=lambda x: -x[1])[:3],
-            }, ensure_ascii=False)
-
-    class TrendInput(BaseModel):
-        data_json: str = Field(description="消费数据 JSON 字符串")
-
-    class TrendTool(BaseTool):
-        name: str = "trend_analysis"
-        description: str = "分析消费趋势：月度变化、环比增长率、趋势方向"
-        args_schema: Type[BaseModel] = TrendInput
-
-        def _run(self, data_json: str, **kwargs) -> str:
-            data = json.loads(data_json)
-            history = data.get("history", [])
-            if len(history) < 2:
-                return json.dumps({"message": "历史数据不足"}, ensure_ascii=False)
-            recent = [h["expense"] for h in history if h["expense"] > 0]
-            if len(recent) < 2:
-                return json.dumps({"message": "有效数据不足"}, ensure_ascii=False)
-            changes = [(recent[i] - recent[i-1]) / recent[i-1] for i in range(1, len(recent)) if recent[i-1] > 0]
-            avg = sum(changes) / len(changes) if changes else 0
-            trend = "上升" if avg > 0.05 else ("下降" if avg < -0.05 else "稳定")
-            return json.dumps({
-                "trend": trend,
-                "avg_monthly_change": round(avg * 100, 2),
-                "history": history,
-            }, ensure_ascii=False)
-
-
-# ============================================================
-# CrewAI Agent 定义
-# ============================================================
-
-def _build_llm(api_key: str) -> LLM:
-    """构造 LLM 实例"""
-    return LLM(
-        model=DEFAULT_MODEL,
-        base_url=AGNES_BASE_URL,
-        api_key=api_key,
-        custom_openai=True,
-    )
-
-
-def _build_crewai_agents(data: dict, api_key: str) -> tuple:
-    """构造 CrewAI Agent 和 Task"""
-    llm = _build_llm(api_key)
-    data_json = json.dumps(data, ensure_ascii=False)
-
-    trend_agent = Agent(
-        role="消费趋势分析师",
-        goal="分析用户消费趋势，输出 JSON 格式的趋势报告",
-        backstory="你是一位专业的消费趋势分析师，擅长从数据中发现消费规律和趋势变化。",
-        tools=[TrendTool()],
-        llm=llm,
-        allow_delegation=False,
-        verbose=False,
-    )
-
-    anomaly_agent = Agent(
-        role="消费异常检测专家",
-        goal="检测用户消费中的异常情况，输出 JSON 格式的异常报告",
-        backstory="你是一位消费安全专家，擅长识别异常消费模式和潜在风险。",
-        tools=[SpendingPatternTool()],
-        llm=llm,
-        allow_delegation=False,
-        verbose=False,
-    )
-
-    budget_agent = Agent(
-        role="个人预算顾问",
-        goal="为用户提供预算建议，输出 JSON 格式的预算报告",
-        backstory="你是一位资深理财顾问，擅长根据消费数据制定合理的预算方案。",
-        tools=[CategoryStatsTool()],
-        llm=llm,
-        allow_delegation=False,
-        verbose=False,
-    )
-
-    savings_agent = Agent(
-        role="省钱教练",
-        goal="为用户提供省钱建议，输出 JSON 格式的省钱方案",
-        backstory="你是一位生活成本优化专家，擅长发现节省开支的机会。",
-        tools=[SpendingPatternTool()],
-        llm=llm,
-        allow_delegation=False,
-        verbose=False,
-    )
-
-    trend_task = Task(
-        description=f"分析以下消费数据的趋势：\n{data_json}\n\n请输出JSON格式的趋势分析报告，包含summary、trend、key_findings字段。",
-        expected_output="JSON格式的趋势分析报告",
-        agent=trend_agent,
-    )
-
-    anomaly_task = Task(
-        description=f"检测以下消费数据中的异常：\n{data_json}\n\n请输出JSON格式的异常检测报告，包含anomalies、risk_level、total_anomaly_amount字段。",
-        expected_output="JSON格式的异常检测报告",
-        agent=anomaly_agent,
-    )
-
-    budget_task = Task(
-        description=f"为以下消费数据制定预算建议：\n{data_json}\n\n请输出JSON格式的预算报告，包含budget_assessment、adjustments、next_month_budget字段。",
-        expected_output="JSON格式的预算报告",
-        agent=budget_agent,
-    )
-
-    savings_task = Task(
-        description=f"为以下消费数据提供省钱建议：\n{data_json}\n\n请输出JSON格式的省钱方案，包含tips、total_potential_saving字段。",
-        expected_output="JSON格式的省钱方案",
-        agent=savings_agent,
-    )
-
-    return (
-        [trend_agent, anomaly_agent, budget_agent, savings_agent],
-        [trend_task, anomaly_task, budget_task, savings_task],
-    )
-
-
-def _parse_json_result(raw: str) -> dict:
-    """从 AI 返回文本中提取 JSON"""
-    try:
-        start = raw.find("{")
-        end = raw.rfind("}") + 1
-        if start >= 0 and end > start:
-            return json.loads(raw[start:end])
-    except json.JSONDecodeError:
-        pass
-    return {"raw_text": raw}
-
-
-# ============================================================
-# 内置工具函数（CrewAI 不可用时降级使用）
+# 工具函数
 # ============================================================
 
 def _category_stats(data: dict) -> dict:
@@ -240,6 +44,20 @@ def _category_stats(data: dict) -> dict:
         "categories": result,
         "top_category": result[0]["category"] if result else "无",
     }
+
+
+def _inflation_estimator(data: dict) -> dict:
+    """估算消费趋势"""
+    history = data.get("history", [])
+    if len(history) < 2:
+        return {"message": "历史数据不足"}
+    recent = [h["expense"] for h in history if h["expense"] > 0]
+    if len(recent) < 2:
+        return {"message": "有效数据不足"}
+    changes = [(recent[i] - recent[i-1]) / recent[i-1] for i in range(1, len(recent)) if recent[i-1] > 0]
+    avg = sum(changes) / len(changes) if changes else 0
+    trend = "上升" if avg > 0.05 else ("下降" if avg < -0.05 else "稳定")
+    return {"trend": trend, "avg_monthly_change": round(avg * 100, 2)}
 
 
 def _spending_pattern(data: dict) -> dict:
@@ -267,35 +85,68 @@ def _spending_pattern(data: dict) -> dict:
 
 
 # ============================================================
-# 多 Agent 分析
+# 调用 AI API
 # ============================================================
 
-AGENT_CONFIGS = [
+async def _call_ai(messages: list, api_key: str = "") -> str:
+    """调用 Agnes AI（OpenAI 兼容接口）"""
+    import httpx
+    key = api_key or AGNES_API_KEY
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(
+            f"{AGNES_BASE_URL}/chat/completions",
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            json={"model": DEFAULT_MODEL, "messages": messages, "temperature": 0.3},
+        )
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+
+
+# ============================================================
+# 多 Agent 分析（4 个 Agent 并行执行）
+# ============================================================
+
+AGENTS = [
     {
         "name": "趋势分析师",
-        "key": "trend",
         "system": "你是消费趋势分析师。分析用户消费数据，输出JSON：{\"summary\":\"概述\",\"trend\":\"上升/下降/稳定\",\"key_findings\":[\"发现1\",\"发现2\",\"发现3\"]}",
         "tool": _category_stats,
     },
     {
         "name": "异常检测专家",
-        "key": "anomaly",
         "system": "你是消费异常检测专家。检测异常消费，输出JSON：{\"anomalies\":[{\"type\":\"类型\",\"description\":\"描述\",\"amount\":金额,\"suggestion\":\"建议\"}],\"risk_level\":\"低/中/高\",\"total_anomaly_amount\":总金额}",
         "tool": _spending_pattern,
     },
     {
         "name": "预算顾问",
-        "key": "budget",
         "system": "你是个人预算顾问。提供预算建议，输出JSON：{\"budget_assessment\":\"评估\",\"adjustments\":[{\"category\":\"类别\",\"current\":当前,\"suggested\":建议,\"reason\":\"原因\"}],\"next_month_budget\":建议总预算}",
         "tool": _category_stats,
     },
     {
         "name": "省钱教练",
-        "key": "savings",
         "system": "你是省钱教练。提供省钱建议，输出JSON：{\"tips\":[{\"area\":\"领域\",\"method\":\"方法\",\"estimated_saving\":预计节省,\"impact\":\"影响\"}],\"total_potential_saving\":总节省}",
         "tool": _spending_pattern,
     },
 ]
+
+
+async def _run_agent(agent: dict, data: dict, api_key: str) -> dict:
+    """运行单个 Agent"""
+    tool_result = agent["tool"](data)
+    messages = [
+        {"role": "system", "content": agent["system"]},
+        {"role": "user", "content": f"消费数据：{json.dumps(data, ensure_ascii=False)}\n\n工具分析结果：{json.dumps(tool_result, ensure_ascii=False)}\n\n请基于以上数据输出JSON分析报告。"},
+    ]
+    raw = await _call_ai(messages, api_key)
+    # 提取 JSON
+    try:
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        if start >= 0 and end > start:
+            return json.loads(raw[start:end])
+    except json.JSONDecodeError:
+        pass
+    return {"raw_text": raw}
 
 
 async def _fetch_user_data(user_id: int, year_month: str) -> dict:
@@ -353,49 +204,6 @@ async def _fetch_user_data(user_id: int, year_month: str) -> dict:
     }
 
 
-async def _run_single_agent(agent_config: dict, data: dict, api_key: str) -> dict:
-    """httpx 模式：运行单个 Agent"""
-    import httpx
-    tool_result = agent_config["tool"](data)
-    messages = [
-        {"role": "system", "content": agent_config["system"]},
-        {"role": "user", "content": f"消费数据：{json.dumps(data, ensure_ascii=False)}\n\n工具分析结果：{json.dumps(tool_result, ensure_ascii=False)}\n\n请基于以上数据输出JSON分析报告。"},
-    ]
-    key = api_key or AGNES_API_KEY
-    async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(
-            f"{AGNES_BASE_URL}/chat/completions",
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-            json={"model": DEFAULT_MODEL, "messages": messages, "temperature": 0.3},
-        )
-        resp.raise_for_status()
-        raw = resp.json()["choices"][0]["message"]["content"]
-    return _parse_json_result(raw)
-
-
-def _run_crewai_analysis(data: dict, api_key: str) -> dict:
-    """CrewAI 模式：运行 4 个 Agent"""
-    agents, tasks = _build_crewai_agents(data, api_key)
-    crew = Crew(
-        agents=agents,
-        tasks=tasks,
-        process=Process.sequential,
-        verbose=False,
-    )
-    result = crew.kickoff()
-    # 解析各 Agent 输出
-    output = {"trend": None, "anomaly": None, "budget": None, "savings": None}
-    keys = ["trend", "anomaly", "budget", "savings"]
-    if hasattr(result, "tasks_output") and result.tasks_output:
-        for i, task_output in enumerate(result.tasks_output):
-            if i < len(keys):
-                raw = task_output.raw if hasattr(task_output, "raw") else str(task_output)
-                output[keys[i]] = _parse_json_result(raw)
-    elif isinstance(result, str):
-        output["trend"] = _parse_json_result(result)
-    return output
-
-
 # ============================================================
 # API 路由
 # ============================================================
@@ -414,23 +222,17 @@ async def analyze_expenses(
         if data["transaction_count"] == 0:
             return {"success": False, "message": f"{request.year_month} 暂无交易数据"}
 
-        # CrewAI 模式 vs httpx 模式
-        if _CREWAI_AVAILABLE:
-            try:
-                analysis = await asyncio.to_thread(_run_crewai_analysis, data, api_key)
-            except Exception:
-                # CrewAI 失败时降级为 httpx 并行模式
-                tasks = [_run_single_agent(ac, data, api_key) for ac in AGENT_CONFIGS]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                analysis = {}
-                for i, result in enumerate(results):
-                    analysis[AGENT_CONFIGS[i]["key"]] = result if not isinstance(result, Exception) else {"error": str(result)}
-        else:
-            tasks = [_run_single_agent(ac, data, api_key) for ac in AGENT_CONFIGS]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            analysis = {}
-            for i, result in enumerate(results):
-                analysis[AGENT_CONFIGS[i]["key"]] = result if not isinstance(result, Exception) else {"error": str(result)}
+        # 并行执行 4 个 Agent
+        tasks = [_run_agent(agent, data, api_key) for agent in AGENTS]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        analysis = {"trend": None, "anomaly": None, "budget": None, "savings": None}
+        keys = ["trend", "anomaly", "budget", "savings"]
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                analysis[keys[i]] = {"error": str(result)}
+            else:
+                analysis[keys[i]] = result
 
         return {
             "success": True,
@@ -477,14 +279,14 @@ async def analyze_stream(websocket: WebSocket):
         analysis = {"trend": None, "anomaly": None, "budget": None, "savings": None}
         keys = ["trend", "anomaly", "budget", "savings"]
 
-        for i, ac in enumerate(AGENT_CONFIGS):
-            await websocket.send_json({"type": "agent_start", "agent": ac["name"], "status": f"{ac['name']} 分析中..."})
+        for i, agent in enumerate(AGENTS):
+            await websocket.send_json({"type": "agent_start", "agent": agent["name"], "status": f"{agent['name']} 分析中..."})
             try:
-                result = await _run_single_agent(ac, user_data, api_key)
-                analysis[ac["key"]] = result
+                result = await _run_agent(agent, user_data, api_key)
+                analysis[keys[i]] = result
             except Exception as e:
-                analysis[ac["key"]] = {"error": str(e)}
-            await websocket.send_json({"type": "agent_complete", "agent": ac["name"], "status": f"{ac['name']} 完成"})
+                analysis[keys[i]] = {"error": str(e)}
+            await websocket.send_json({"type": "agent_complete", "agent": agent["name"], "status": f"{agent['name']} 完成"})
 
         await websocket.send_json({
             "type": "complete", "success": True, "year_month": year_month,
