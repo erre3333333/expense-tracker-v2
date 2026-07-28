@@ -17,6 +17,15 @@ AGNES_API_KEY = os.environ.get("AGNES_API_KEY", "sk-yNyarp9QLUZV8NYybNl1x8LbRPg2
 AGNES_BASE_URL = "https://apihub.agnes-ai.com/v1"
 DEFAULT_MODEL = "agnes-2.0-flash"
 
+# CrewAI 懒加载
+_CREWAI_AVAILABLE = False
+try:
+    from crewai import Agent, Task, Crew, Process, LLM
+    from crewai.tools import BaseTool
+    _CREWAI_AVAILABLE = True
+except ImportError:
+    BaseTool = object
+
 
 def _to_float(val) -> float:
     if isinstance(val, Decimal):
@@ -29,8 +38,154 @@ class AnalyzeRequest(BaseModel):
 
 
 # ============================================================
-# 工具函数
+# 工具（BaseTool 子类，CrewAI 可用时生效）
 # ============================================================
+
+if _CREWAI_AVAILABLE:
+
+    class CategoryStatsTool(BaseTool):
+        name: str = "分类统计"
+        description: str = "统计各分类消费占比，返回总消费、各分类金额和占比"
+
+        def _run(self, data_json: str, **kwargs) -> str:
+            data = json.loads(data_json)
+            expense_by_category = data.get("expense_by_category", {})
+            total = sum(expense_by_category.values())
+            result = []
+            for cat, amt in sorted(expense_by_category.items(), key=lambda x: -x[1]):
+                pct = round((amt / total * 100), 1) if total > 0 else 0
+                result.append({"category": cat, "amount": amt, "percentage": pct})
+            return json.dumps({
+                "total_expense": total,
+                "categories": result,
+                "top_category": result[0]["category"] if result else "无",
+            }, ensure_ascii=False)
+
+    class SpendingPatternTool(BaseTool):
+        name: str = "消费模式分析"
+        description: str = "分析消费模式：日均消费、消费高峰日、大额交易、高频分类"
+
+        def _run(self, data_json: str, **kwargs) -> str:
+            data = json.loads(data_json)
+            txns = data.get("recent_transactions", [])
+            if not txns:
+                return json.dumps({"message": "无交易数据"}, ensure_ascii=False)
+            daily = {}
+            for t in txns:
+                day = t["date"][:10]
+                daily[day] = daily.get(day, 0) + t["amount"]
+            peak = sorted(daily.items(), key=lambda x: -x[1])[:3]
+            amounts = [t["amount"] for t in txns]
+            avg = sum(amounts) / len(amounts) if amounts else 0
+            large = [t for t in txns if t["amount"] > avg * 2]
+            freq = {}
+            for t in txns:
+                freq[t["category"]] = freq.get(t["category"], 0) + 1
+            return json.dumps({
+                "avg_daily_spending": round(avg, 2),
+                "peak_days": [{"date": d, "amount": round(a, 2)} for d, a in peak],
+                "large_transactions": [{"date": t["date"], "category": t["category"], "amount": t["amount"], "note": t["note"]} for t in large[:5]],
+                "frequent_categories": sorted(freq.items(), key=lambda x: -x[1])[:3],
+            }, ensure_ascii=False)
+
+    class TrendTool(BaseTool):
+        name: str = "趋势分析"
+        description: str = "分析消费趋势：月度变化、环比增长率、趋势方向"
+
+        def _run(self, data_json: str, **kwargs) -> str:
+            data = json.loads(data_json)
+            history = data.get("history", [])
+            if len(history) < 2:
+                return json.dumps({"message": "历史数据不足"}, ensure_ascii=False)
+            recent = [h["expense"] for h in history if h["expense"] > 0]
+            if len(recent) < 2:
+                return json.dumps({"message": "有效数据不足"}, ensure_ascii=False)
+            changes = [(recent[i] - recent[i-1]) / recent[i-1] for i in range(1, len(recent)) if recent[i-1] > 0]
+            avg = sum(changes) / len(changes) if changes else 0
+            trend = "上升" if avg > 0.05 else ("下降" if avg < -0.05 else "稳定")
+            return json.dumps({
+                "trend": trend,
+                "avg_monthly_change": round(avg * 100, 2),
+                "history": history,
+            }, ensure_ascii=False)
+
+
+# ============================================================
+# 调用 AI API（httpx 直连，不依赖 CrewAI）
+# ============================================================
+
+async def _call_ai(messages: list, api_key: str = "") -> str:
+    """调用 Agnes AI（OpenAI 兼容接口）"""
+    key = api_key or AGNES_API_KEY
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(
+            f"{AGNES_BASE_URL}/chat/completions",
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            json={"model": DEFAULT_MODEL, "messages": messages, "temperature": 0.3},
+        )
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+
+
+# ============================================================
+# 多 Agent 分析
+# ============================================================
+
+AGENTS = [
+    {
+        "name": "趋势分析师",
+        "system": "你是消费趋势分析师。分析用户消费数据，输出JSON：{\"summary\":\"概述\",\"trend\":\"上升/下降/稳定\",\"key_findings\":[\"发现1\",\"发现2\",\"发现3\"]}",
+        "tool": "category_stats" if _CREWAI_AVAILABLE else None,
+    },
+    {
+        "name": "异常检测专家",
+        "system": "你是消费异常检测专家。检测异常消费，输出JSON：{\"anomalies\":[{\"type\":\"类型\",\"description\":\"描述\",\"amount\":金额,\"suggestion\":\"建议\"}],\"risk_level\":\"低/中/高\",\"total_anomaly_amount\":总金额}",
+        "tool": "spending_pattern" if _CREWAI_AVAILABLE else None,
+    },
+    {
+        "name": "预算顾问",
+        "system": "你是个人预算顾问。提供预算建议，输出JSON：{\"budget_assessment\":\"评估\",\"adjustments\":[{\"category\":\"类别\",\"current\":当前,\"suggested\":建议,\"reason\":\"原因\"}],\"next_month_budget\":建议总预算}",
+        "tool": "category_stats" if _CREWAI_AVAILABLE else None,
+    },
+    {
+        "name": "省钱教练",
+        "system": "你是省钱教练。提供省钱建议，输出JSON：{\"tips\":[{\"area\":\"领域\",\"method\":\"方法\",\"estimated_saving\":预计节省,\"impact\":\"影响\"}],\"total_potential_saving\":总节省}",
+        "tool": "spending_pattern" if _CREWAI_AVAILABLE else None,
+    },
+]
+
+
+async def _run_agent(agent: dict, data: dict, api_key: str) -> dict:
+    """运行单个 Agent（支持 CrewAI 和 httpx 两种模式）"""
+    # 构造工具分析结果
+    tool_name = agent.get("tool")
+    tool_result = {}
+    if tool_name and _CREWAI_AVAILABLE:
+        tool_map = {"category_stats": CategoryStatsTool, "spending_pattern": SpendingPatternTool, "trend": TrendTool}
+        if tool_name in tool_map:
+            tool_result = json.loads(tool_map[tool_name]()._run(json.dumps(data, ensure_ascii=False)))
+    else:
+        # 无 CrewAI 时用内置函数
+        if tool_name == "category_stats":
+            tool_result = _category_stats(data)
+        elif tool_name == "spending_pattern":
+            tool_result = _spending_pattern(data)
+
+    messages = [
+        {"role": "system", "content": agent["system"]},
+        {"role": "user", "content": f"消费数据：{json.dumps(data, ensure_ascii=False)}\n\n工具分析结果：{json.dumps(tool_result, ensure_ascii=False)}\n\n请基于以上数据输出JSON分析报告。"},
+    ]
+    raw = await _call_ai(messages, api_key)
+    # 提取 JSON
+    try:
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        if start >= 0 and end > start:
+            return json.loads(raw[start:end])
+    except json.JSONDecodeError:
+        pass
+    return {"raw_text": raw}
+
 
 def _category_stats(data: dict) -> dict:
     """统计各分类消费占比"""
@@ -45,20 +200,6 @@ def _category_stats(data: dict) -> dict:
         "categories": result,
         "top_category": result[0]["category"] if result else "无",
     }
-
-
-def _inflation_estimator(data: dict) -> dict:
-    """估算消费趋势"""
-    history = data.get("history", [])
-    if len(history) < 2:
-        return {"message": "历史数据不足"}
-    recent = [h["expense"] for h in history if h["expense"] > 0]
-    if len(recent) < 2:
-        return {"message": "有效数据不足"}
-    changes = [(recent[i] - recent[i-1]) / recent[i-1] for i in range(1, len(recent)) if recent[i-1] > 0]
-    avg = sum(changes) / len(changes) if changes else 0
-    trend = "上升" if avg > 0.05 else ("下降" if avg < -0.05 else "稳定")
-    return {"trend": trend, "avg_monthly_change": round(avg * 100, 2)}
 
 
 def _spending_pattern(data: dict) -> dict:
@@ -83,70 +224,6 @@ def _spending_pattern(data: dict) -> dict:
         "large_transactions": [{"date": t["date"], "category": t["category"], "amount": t["amount"], "note": t["note"]} for t in large[:5]],
         "frequent_categories": sorted(freq.items(), key=lambda x: -x[1])[:3],
     }
-
-
-# ============================================================
-# 调用 AI API
-# ============================================================
-
-async def _call_ai(messages: list, api_key: str = "") -> str:
-    """调用 Agnes AI（OpenAI 兼容接口）"""
-    key = api_key or AGNES_API_KEY
-    async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(
-            f"{AGNES_BASE_URL}/chat/completions",
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-            json={"model": DEFAULT_MODEL, "messages": messages, "temperature": 0.3},
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
-
-
-# ============================================================
-# 多 Agent 分析
-# ============================================================
-
-AGENTS = [
-    {
-        "name": "趋势分析师",
-        "system": "你是消费趋势分析师。分析用户消费数据，输出JSON：{\"summary\":\"概述\",\"trend\":\"上升/下降/稳定\",\"key_findings\":[\"发现1\",\"发现2\",\"发现3\"]}",
-        "tool": _category_stats,
-    },
-    {
-        "name": "异常检测专家",
-        "system": "你是消费异常检测专家。检测异常消费，输出JSON：{\"anomalies\":[{\"type\":\"类型\",\"description\":\"描述\",\"amount\":金额,\"suggestion\":\"建议\"}],\"risk_level\":\"低/中/高\",\"total_anomaly_amount\":总金额}",
-        "tool": _spending_pattern,
-    },
-    {
-        "name": "预算顾问",
-        "system": "你是个人预算顾问。提供预算建议，输出JSON：{\"budget_assessment\":\"评估\",\"adjustments\":[{\"category\":\"类别\",\"current\":当前,\"suggested\":建议,\"reason\":\"原因\"}],\"next_month_budget\":建议总预算}",
-        "tool": _category_stats,
-    },
-    {
-        "name": "省钱教练",
-        "system": "你是省钱教练。提供省钱建议，输出JSON：{\"tips\":[{\"area\":\"领域\",\"method\":\"方法\",\"estimated_saving\":预计节省,\"impact\":\"影响\"}],\"total_potential_saving\":总节省}",
-        "tool": _spending_pattern,
-    },
-]
-
-
-async def _run_agent(agent: dict, data: dict, api_key: str) -> dict:
-    """运行单个 Agent"""
-    tool_result = agent["tool"](data)
-    messages = [
-        {"role": "system", "content": agent["system"]},
-        {"role": "user", "content": f"消费数据：{json.dumps(data, ensure_ascii=False)}\n\n工具分析结果：{json.dumps(tool_result, ensure_ascii=False)}\n\n请基于以上数据输出JSON分析报告。"},
-    ]
-    raw = await _call_ai(messages, api_key)
-    # 提取 JSON
-    try:
-        start = raw.find("{")
-        end = raw.rfind("}") + 1
-        if start >= 0 and end > start:
-            return json.loads(raw[start:end])
-    except json.JSONDecodeError:
-        pass
-    return {"raw_text": raw}
 
 
 async def _fetch_user_data(user_id: int, year_month: str) -> dict:
