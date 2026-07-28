@@ -29,141 +29,138 @@ class AnalyzeRequest(BaseModel):
 
 
 # ============================================================
-# 工具定义（Tools）
+# 工具逻辑（纯函数，不依赖 crewai）
 # ============================================================
 
-from crewai.tools import BaseTool
-from pydantic import Field
+def _category_stats(data_json: str) -> str:
+    """统计各分类消费占比"""
+    try:
+        data = json.loads(data_json)
+        expense_by_category = data.get("expense_by_category", {})
+        total = sum(expense_by_category.values())
+
+        result = []
+        for cat, amt in sorted(expense_by_category.items(), key=lambda x: -x[1]):
+            pct = round((amt / total * 100), 1) if total > 0 else 0
+            result.append({"category": cat, "amount": amt, "percentage": pct})
+
+        return json.dumps({
+            "total_expense": total,
+            "categories": result,
+            "top_category": result[0]["category"] if result else "无",
+        }, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
 
-class CategoryStatsTool(BaseTool):
-    """统计各分类消费占比的工具"""
-    name: str = "category_stats"
-    description: str = "统计各消费分类的金额和占比，返回 JSON 格式"
+def _inflation_estimator(data_json: str) -> str:
+    """估算各类别通胀影响"""
+    try:
+        data = json.loads(data_json)
+        history = data.get("history", [])
 
-    def _run(self, data_json: str) -> str:
-        """执行分类统计"""
-        try:
-            data = json.loads(data_json)
-            expense_by_category = data.get("expense_by_category", {})
-            total = sum(expense_by_category.values())
+        if len(history) < 2:
+            return json.dumps({"message": "历史数据不足，无法估算趋势"})
 
-            result = []
-            for cat, amt in sorted(expense_by_category.items(), key=lambda x: -x[1]):
-                pct = round((amt / total * 100), 1) if total > 0 else 0
-                result.append({"category": cat, "amount": amt, "percentage": pct})
+        recent_expenses = [h["expense"] for h in history if h["expense"] > 0]
+        if len(recent_expenses) < 2:
+            return json.dumps({"message": "有效消费数据不足"})
 
-            return json.dumps({
-                "total_expense": total,
-                "categories": result,
-                "top_category": result[0]["category"] if result else "无",
-            }, ensure_ascii=False)
-        except Exception as e:
-            return json.dumps({"error": str(e)})
+        changes = []
+        for i in range(1, len(recent_expenses)):
+            if recent_expenses[i - 1] > 0:
+                change = (recent_expenses[i] - recent_expenses[i - 1]) / recent_expenses[i - 1]
+                changes.append(change)
 
+        avg_change = sum(changes) / len(changes) if changes else 0
 
-class InflationEstimatorTool(BaseTool):
-    """估算各类别通胀影响的工具"""
-    name: str = "inflation_estimator"
-    description: str = "根据历史数据估算各类别的消费变化趋势（类似通胀影响）"
+        if avg_change > 0.05:
+            trend = "上升"
+        elif avg_change < -0.05:
+            trend = "下降"
+        else:
+            trend = "稳定"
 
-    def _run(self, data_json: str) -> str:
-        """执行通胀估算"""
-        try:
-            data = json.loads(data_json)
-            history = data.get("history", [])
-
-            if len(history) < 2:
-                return json.dumps({"message": "历史数据不足，无法估算趋势"})
-
-            # 计算最近几个月的消费变化率
-            recent_expenses = [h["expense"] for h in history if h["expense"] > 0]
-            if len(recent_expenses) < 2:
-                return json.dumps({"message": "有效消费数据不足"})
-
-            # 计算平均变化率
-            changes = []
-            for i in range(1, len(recent_expenses)):
-                if recent_expenses[i - 1] > 0:
-                    change = (recent_expenses[i] - recent_expenses[i - 1]) / recent_expenses[i - 1]
-                    changes.append(change)
-
-            avg_change = sum(changes) / len(changes) if changes else 0
-
-            # 判断趋势
-            if avg_change > 0.05:
-                trend = "上升"
-            elif avg_change < -0.05:
-                trend = "下降"
-            else:
-                trend = "稳定"
-
-            return json.dumps({
-                "trend": trend,
-                "avg_monthly_change": round(avg_change * 100, 2),
-                "recent_expenses": recent_expenses,
-                "suggestion": f"消费整体{trend}，建议{'控制支出' if avg_change > 0 else '保持当前消费习惯'}",
-            }, ensure_ascii=False)
-        except Exception as e:
-            return json.dumps({"error": str(e)})
+        return json.dumps({
+            "trend": trend,
+            "avg_monthly_change": round(avg_change * 100, 2),
+            "recent_expenses": recent_expenses,
+            "suggestion": f"消费整体{trend}，建议{'控制支出' if avg_change > 0 else '保持当前消费习惯'}",
+        }, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
 
-class SpendingPatternTool(BaseTool):
-    """分析消费模式的工具"""
-    name: str = "spending_pattern"
-    description: str = "分析用户的消费模式，包括高频消费、大额消费、消费周期等"
+def _spending_pattern(data_json: str) -> str:
+    """分析消费模式"""
+    try:
+        data = json.loads(data_json)
+        transactions = data.get("recent_transactions", [])
 
-    def _run(self, data_json: str) -> str:
-        """分析消费模式"""
-        try:
-            data = json.loads(data_json)
-            transactions = data.get("recent_transactions", [])
+        if not transactions:
+            return json.dumps({"message": "无交易数据"})
 
-            if not transactions:
-                return json.dumps({"message": "无交易数据"})
+        daily = {}
+        for t in transactions:
+            day = t["date"][:10]
+            daily[day] = daily.get(day, 0) + t["amount"]
 
-            # 按日期统计
-            daily = {}
-            for t in transactions:
-                day = t["date"][:10]  # YYYY-MM-DD
-                daily[day] = daily.get(day, 0) + t["amount"]
+        peak_days = sorted(daily.items(), key=lambda x: -x[1])[:3]
 
-            # 找出消费高峰日
-            peak_days = sorted(daily.items(), key=lambda x: -x[1])[:3]
+        amounts = [t["amount"] for t in transactions]
+        avg = sum(amounts) / len(amounts) if amounts else 0
+        large_transactions = [t for t in transactions if t["amount"] > avg * 2]
 
-            # 大额消费（超过平均值2倍）
-            amounts = [t["amount"] for t in transactions]
-            avg = sum(amounts) / len(amounts) if amounts else 0
-            large_transactions = [t for t in transactions if t["amount"] > avg * 2]
+        freq = {}
+        for t in transactions:
+            cat = t["category"]
+            freq[cat] = freq.get(cat, 0) + 1
+        frequent_cats = sorted(freq.items(), key=lambda x: -x[1])[:3]
 
-            # 高频消费类别
-            freq = {}
-            for t in transactions:
-                cat = t["category"]
-                freq[cat] = freq.get(cat, 0) + 1
-            frequent_cats = sorted(freq.items(), key=lambda x: -x[1])[:3]
-
-            return json.dumps({
-                "avg_daily_spending": round(avg, 2),
-                "peak_days": [{"date": d, "amount": round(a, 2)} for d, a in peak_days],
-                "large_transactions": [
-                    {"date": t["date"], "category": t["category"], "amount": t["amount"], "note": t["note"]}
-                    for t in large_transactions[:5]
-                ],
-                "frequent_categories": [{"category": c, "count": n} for c, n in frequent_cats],
-                "total_transactions": len(transactions),
-            }, ensure_ascii=False)
-        except Exception as e:
-            return json.dumps({"error": str(e)})
+        return json.dumps({
+            "avg_daily_spending": round(avg, 2),
+            "peak_days": [{"date": d, "amount": round(a, 2)} for d, a in peak_days],
+            "large_transactions": [
+                {"date": t["date"], "category": t["category"], "amount": t["amount"], "note": t["note"]}
+                for t in large_transactions[:5]
+            ],
+            "frequent_categories": [{"category": c, "count": n} for c, n in frequent_cats],
+            "total_transactions": len(transactions),
+        }, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
 
 # ============================================================
-# Agent 构建
+# Agent 构建（延迟导入 crewai）
 # ============================================================
 
 def _build_agents_and_crew(data_summary: str, year_month: str, api_key: str = ""):
-    """构建 CrewAI agents 和 crew（支持委派、记忆、工具）"""
+    """构建 CrewAI agents 和 crew"""
     from crewai import Agent, Task, Crew, Process, LLM
+    from crewai.tools import BaseTool
+
+    # 基于纯函数创建 CrewAI 工具类
+    class CategoryStatsTool(BaseTool):
+        name: str = "category_stats"
+        description: str = "统计各消费分类的金额和占比，返回 JSON 格式"
+
+        def _run(self, data_json: str) -> str:
+            return _category_stats(data_json)
+
+    class InflationEstimatorTool(BaseTool):
+        name: str = "inflation_estimator"
+        description: str = "根据历史数据估算各类别的消费变化趋势"
+
+        def _run(self, data_json: str) -> str:
+            return _inflation_estimator(data_json)
+
+    class SpendingPatternTool(BaseTool):
+        name: str = "spending_pattern"
+        description: str = "分析用户的消费模式，包括高频消费、大额消费"
+
+        def _run(self, data_json: str) -> str:
+            return _spending_pattern(data_json)
 
     # 初始化 LLM
     llm = LLM(
@@ -178,14 +175,14 @@ def _build_agents_and_crew(data_summary: str, year_month: str, api_key: str = ""
     inflation_tool = InflationEstimatorTool()
     pattern_tool = SpendingPatternTool()
 
-    # Agent 1: 趋势分析师（配备工具）
+    # Agent 1: 趋势分析师
     trend_analyst = Agent(
         role="消费趋势分析师",
         goal="分析用户的消费趋势，识别消费模式和变化方向",
         backstory="你是一位专业的消费趋势分析师，擅长从数据中发现消费模式和趋势变化。"
                   "你可以使用工具来获取更精确的统计数据。",
         verbose=False,
-        allow_delegation=True,  # 允许委派给其他 Agent
+        allow_delegation=True,
         llm=llm,
         tools=[category_tool, inflation_tool, pattern_tool],
     )
@@ -237,8 +234,6 @@ def _build_agents_and_crew(data_summary: str, year_month: str, api_key: str = ""
 2. 主要消费类别分布
 3. 消费趋势（是否有增长/下降趋势）
 4. 消费习惯特点
-
-你可以先用 category_stats 工具获取分类统计，再用 inflation_estimator 工具估算趋势。
 
 输出格式（JSON）：
 {{
@@ -325,8 +320,8 @@ def _build_agents_and_crew(data_summary: str, year_month: str, api_key: str = ""
     crew = Crew(
         agents=[trend_analyst, anomaly_detector, budget_advisor, savings_coach],
         tasks=[trend_task, anomaly_task, budget_task, savings_task],
-        process=Process.hierarchical,  # 层级模式：Manager Agent 协调任务分配
-        memory=True,                    # 启用记忆系统
+        process=Process.hierarchical,
+        memory=True,
         verbose=False,
     )
 
@@ -340,7 +335,6 @@ def _build_agents_and_crew(data_summary: str, year_month: str, api_key: str = ""
 async def _fetch_user_data(user_id: int, year_month: str) -> dict:
     """获取用户当月的消费数据"""
     async with get_db() as db:
-        # 获取当月交易
         cursor = await db.execute(
             """SELECT type, category, amount, note, date
                FROM transactions
@@ -350,7 +344,6 @@ async def _fetch_user_data(user_id: int, year_month: str) -> dict:
         )
         rows = await cursor.fetchall()
 
-        # 获取历史趋势（近6个月）
         trend_cursor = await db.execute(
             """SELECT strftime('%Y-%m', date) as month,
                       SUM(CASE WHEN type='expense' THEN amount ELSE 0 END) as expense,
@@ -362,7 +355,6 @@ async def _fetch_user_data(user_id: int, year_month: str) -> dict:
         )
         trend_rows = await trend_cursor.fetchall()
 
-    # 构建数据摘要
     transactions = []
     total_income = 0
     total_expense = 0
@@ -382,14 +374,12 @@ async def _fetch_user_data(user_id: int, year_month: str) -> dict:
         else:
             total_expense += amt
 
-    # 按类别汇总
     expense_by_category = {}
     for t in transactions:
         if t["type"] == "expense":
             cat = t["category"]
             expense_by_category[cat] = expense_by_category.get(cat, 0) + t["amount"]
 
-    # 历史趋势
     history = []
     for row in trend_rows:
         history.append({
@@ -405,7 +395,7 @@ async def _fetch_user_data(user_id: int, year_month: str) -> dict:
         "balance": round(total_income - total_expense, 2),
         "transaction_count": len(transactions),
         "expense_by_category": {k: round(v, 2) for k, v in expense_by_category.items()},
-        "recent_transactions": transactions[:20],  # 最近20条
+        "recent_transactions": transactions[:20],
         "history": history,
     }
 
@@ -425,13 +415,9 @@ async def analyze_expenses(
     """多 Agent 消费分析（同步模式）"""
     api_key = api_key or AGNES_API_KEY
     if not api_key:
-        raise HTTPException(
-            status_code=400,
-            detail="请先设置 API Key",
-        )
+        raise HTTPException(status_code=400, detail="请先设置 API Key")
 
     try:
-        # 获取用户数据
         data = await _fetch_user_data(current_user["id"], request.year_month)
 
         if data["transaction_count"] == 0:
@@ -440,39 +426,23 @@ async def analyze_expenses(
                 "message": f"{request.year_month} 暂无交易数据，请先添加一些记录",
             }
 
-        # 构建 CrewAI
         data_summary = json.dumps(data, ensure_ascii=False, indent=2)
         crew = _build_agents_and_crew(data_summary, request.year_month, api_key=api_key)
-
-        # 执行分析
         result = crew.kickoff()
 
-        # 解析结果
-        analysis = {
-            "trend": None,
-            "anomaly": None,
-            "budget": None,
-            "savings": None,
-        }
+        analysis = {"trend": None, "anomaly": None, "budget": None, "savings": None}
 
         tasks_output = result.tasks_output if hasattr(result, 'tasks_output') else []
         for i, task_output in enumerate(tasks_output):
             raw = task_output.raw if hasattr(task_output, 'raw') else str(task_output)
-            # 尝试提取 JSON
             try:
                 start = raw.find("{")
                 end = raw.rfind("}") + 1
                 if start >= 0 and end > start:
                     parsed = json.loads(raw[start:end])
-                    if i == 0:
-                        analysis["trend"] = parsed
-                    elif i == 1:
-                        analysis["anomaly"] = parsed
-                    elif i == 2:
-                        analysis["budget"] = parsed
-                    elif i == 3:
-                        analysis["savings"] = parsed
-            except json.JSONDecodeError:
+                    key = ["trend", "anomaly", "budget", "savings"][i]
+                    analysis[key] = parsed
+            except (json.JSONDecodeError, IndexError):
                 key = ["trend", "anomaly", "budget", "savings"][i]
                 analysis[key] = {"raw_text": raw}
 
@@ -488,10 +458,7 @@ async def analyze_expenses(
         }
 
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"AI 分析失败: {str(e)}",
-        )
+        raise HTTPException(status_code=500, detail=f"AI 分析失败: {str(e)}")
 
 
 # ============================================================
@@ -504,80 +471,42 @@ async def analyze_stream(websocket: WebSocket):
     await websocket.accept()
 
     try:
-        # 接收请求数据
         data = await websocket.receive_json()
         year_month = data.get("year_month", "")
         api_key = data.get("api_key", "") or AGNES_API_KEY
         user_id = data.get("user_id")
 
         if not api_key:
-            await websocket.send_json({
-                "type": "error",
-                "message": "请先设置 Agnes AI API Key",
-            })
+            await websocket.send_json({"type": "error", "message": "请先设置 Agnes AI API Key"})
             await websocket.close()
             return
 
-        # 发送开始消息
-        await websocket.send_json({
-            "type": "start",
-            "message": f"开始分析 {year_month} 消费数据...",
-        })
+        await websocket.send_json({"type": "start", "message": f"开始分析 {year_month} 消费数据..."})
 
-        # 获取用户数据
-        await websocket.send_json({
-            "type": "progress",
-            "agent": "数据获取",
-            "status": "正在从数据库读取消费记录...",
-        })
+        await websocket.send_json({"type": "progress", "agent": "数据获取", "status": "正在从数据库读取消费记录..."})
 
         user_data = await _fetch_user_data(user_id, year_month)
 
         if user_data["transaction_count"] == 0:
-            await websocket.send_json({
-                "type": "error",
-                "message": f"{year_month} 暂无交易数据",
-            })
+            await websocket.send_json({"type": "error", "message": f"{year_month} 暂无交易数据"})
             await websocket.close()
             return
 
-        await websocket.send_json({
-            "type": "progress",
-            "agent": "数据获取",
-            "status": f"已获取 {user_data['transaction_count']} 条交易记录",
-        })
+        await websocket.send_json({"type": "progress", "agent": "数据获取", "status": f"已获取 {user_data['transaction_count']} 条交易记录"})
 
-        # 构建 CrewAI
         data_summary = json.dumps(user_data, ensure_ascii=False, indent=2)
         crew = _build_agents_and_crew(data_summary, year_month, api_key=api_key)
 
-        # 发送 Agent 启动消息
         agent_names = ["趋势分析师", "异常检测专家", "预算顾问", "省钱教练"]
         for name in agent_names:
-            await websocket.send_json({
-                "type": "agent_start",
-                "agent": name,
-                "status": f"{name} 已就绪，等待任务分配...",
-            })
+            await websocket.send_json({"type": "agent_start", "agent": name, "status": f"{name} 已就绪，等待任务分配..."})
 
-        # 执行分析（后台线程避免阻塞 WebSocket）
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(None, crew.kickoff)
 
-        # 发送完成消息
-        await websocket.send_json({
-            "type": "progress",
-            "agent": "Manager",
-            "status": "所有 Agent 分析完成，正在汇总结果...",
-        })
+        await websocket.send_json({"type": "progress", "agent": "Manager", "status": "所有 Agent 分析完成，正在汇总结果..."})
 
-        # 解析结果
-        analysis = {
-            "trend": None,
-            "anomaly": None,
-            "budget": None,
-            "savings": None,
-        }
+        analysis = {"trend": None, "anomaly": None, "budget": None, "savings": None}
 
         tasks_output = result.tasks_output if hasattr(result, 'tasks_output') else []
         for i, task_output in enumerate(tasks_output):
@@ -587,26 +516,14 @@ async def analyze_stream(websocket: WebSocket):
                 end = raw.rfind("}") + 1
                 if start >= 0 and end > start:
                     parsed = json.loads(raw[start:end])
-                    if i == 0:
-                        analysis["trend"] = parsed
-                    elif i == 1:
-                        analysis["anomaly"] = parsed
-                    elif i == 2:
-                        analysis["budget"] = parsed
-                    elif i == 3:
-                        analysis["savings"] = parsed
-            except json.JSONDecodeError:
+                    key = ["trend", "anomaly", "budget", "savings"][i]
+                    analysis[key] = parsed
+            except (json.JSONDecodeError, IndexError):
                 key = ["trend", "anomaly", "budget", "savings"][i]
                 analysis[key] = {"raw_text": raw}
 
-            # 发送每个 Agent 完成消息
-            await websocket.send_json({
-                "type": "agent_complete",
-                "agent": agent_names[i],
-                "status": f"{agent_names[i]} 分析完成",
-            })
+            await websocket.send_json({"type": "agent_complete", "agent": agent_names[i], "status": f"{agent_names[i]} 分析完成"})
 
-        # 发送最终结果
         await websocket.send_json({
             "type": "complete",
             "success": True,
@@ -625,10 +542,7 @@ async def analyze_stream(websocket: WebSocket):
         pass
     except Exception as e:
         try:
-            await websocket.send_json({
-                "type": "error",
-                "message": f"分析失败: {str(e)}",
-            })
+            await websocket.send_json({"type": "error", "message": f"分析失败: {str(e)}"})
             await websocket.close()
         except:
             pass
