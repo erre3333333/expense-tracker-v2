@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from database import init_db
-from routers import auth, transactions, statistics
+from routers import auth, transactions, statistics, ai_analysis
 
 app = FastAPI(title="Expense Tracker API", version="2.0.0")
 
@@ -26,6 +26,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(transactions.router)
 app.include_router(statistics.router)
+app.include_router(ai_analysis.router)
 
 
 @app.on_event("startup")
