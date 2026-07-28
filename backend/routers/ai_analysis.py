@@ -144,40 +144,40 @@ def _build_crewai_agents(data: dict, api_key: str) -> tuple:
     trend_agent = Agent(
         role="消费趋势分析师",
         goal="分析用户消费趋势，输出 JSON 格式的趋势报告",
-        backstory="你是一位专业的消费趋势分析师，擅长从数据中发现消费规律和趋势变化。你可以向异常检测专家询问异常情况，向预算顾问确认预算数据。",
+        backstory="你是一位专业的消费趋势分析师，擅长从数据中发现消费规律和趋势变化。",
         tools=[TrendTool()],
         llm=llm,
-        allow_delegation=True,
+        allow_delegation=False,
         verbose=False,
     )
 
     anomaly_agent = Agent(
         role="消费异常检测专家",
         goal="检测用户消费中的异常情况，输出 JSON 格式的异常报告",
-        backstory="你是一位消费安全专家，擅长识别异常消费模式和潜在风险。你可以向趋势分析师确认趋势数据，向预算顾问核实预算信息。",
+        backstory="你是一位消费安全专家，擅长识别异常消费模式和潜在风险。",
         tools=[SpendingPatternTool()],
         llm=llm,
-        allow_delegation=True,
+        allow_delegation=False,
         verbose=False,
     )
 
     budget_agent = Agent(
         role="个人预算顾问",
         goal="为用户提供预算建议，输出 JSON 格式的预算报告",
-        backstory="你是一位资深理财顾问，擅长根据消费数据制定合理的预算方案。你可以向趋势分析师了解趋势，向异常检测专家确认异常消费。",
+        backstory="你是一位资深理财顾问，擅长根据消费数据制定合理的预算方案。",
         tools=[CategoryStatsTool()],
         llm=llm,
-        allow_delegation=True,
+        allow_delegation=False,
         verbose=False,
     )
 
     savings_agent = Agent(
         role="省钱教练",
         goal="为用户提供省钱建议，输出 JSON 格式的省钱方案",
-        backstory="你是一位生活成本优化专家，擅长发现节省开支的机会。你可以向预算顾问了解预算分配，向异常检测专家确认异常消费。",
+        backstory="你是一位生活成本优化专家，擅长发现节省开支的机会。",
         tools=[SpendingPatternTool()],
         llm=llm,
-        allow_delegation=True,
+        allow_delegation=False,
         verbose=False,
     )
 
